@@ -1,0 +1,43 @@
+from fastapi import FastAPI
+from database import engine, Base
+from routers import users
+from routers import chat
+from routers import flights
+from fastapi.openapi.utils import get_openapi
+app = FastAPI()
+
+# Include routers
+app.include_router(users.router)
+app.include_router(chat.router)
+app.include_router(flights.router)
+# Create tables
+Base.metadata.create_all(bind=engine)
+
+@app.get("/")
+def root():
+    return {"message": "Flight Booking AI Bot is running!"}
+
+
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    openapi_schema = get_openapi(
+        title="Flight Booking AI",
+        version="1.0.0",
+        description="API for chatting with Gemini AI and booking flights",
+        routes=app.routes,
+    )
+    openapi_schema["components"]["securitySchemes"] = {
+        "BearerAuth": {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "JWT"
+        }
+    }
+    for path in openapi_schema["paths"].values():
+        for method in path.values():
+            method["security"] = [{"BearerAuth": []}]
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+app.openapi = custom_openapi
