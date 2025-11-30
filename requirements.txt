@@ -1,0 +1,15 @@
+fastapi
+uvicorn
+sqlalchemy
+pydantic
+pydantic[email]
+python-dotenv
+passlib[bcrypt]
+python-jose
+httpx
+requests
+python-multipart
+amadeus
+stripe
+alembic
+google-generativeai
