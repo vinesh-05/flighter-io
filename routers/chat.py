@@ -9,7 +9,8 @@ from utils.sorting import sort_flights
 from services.amadeus_service import search_flights
 from services.intent_extraction import extract_flight_details
 from pydantic import BaseModel
-
+from routers.flights import select_flight
+import json
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
 
@@ -61,7 +62,7 @@ def chat_with_bot(
     origin=None
     destination=None
     date=None
-
+    flight_sno=None
     last_chat = (
     db.query(Conversation)
     .filter(Conversation.user_id == current_user.id)
@@ -85,10 +86,11 @@ def chat_with_bot(
     
 
     # Detect possible flight booking intent
-    flight_keywords = ["flight","flights", "book", "ticket", "del", "blr", "mumbai", "bangalore", "goa"]
+    booking_keywords=['booking','book','checkout','payment','pay','select']
+    flight_keywords = ["flight","flights", "show", "ticket", "del", "blr", "mumbai", "bangalore", "goa"]
     sort_keywords=['sort','arrange','ascending','descending','asc','desc','order']
     details=extract_flight_details(message)
-    # print(details)
+    print(details)
     if "error" in details:
         reply = "Sorry, I couldn't understand the flight details. Could you rephrase?"
     else:
@@ -97,18 +99,19 @@ def chat_with_bot(
         # print(type(origin))
         destination = details.get("destination")
         date = details.get("date") or datetime.now().date().isoformat()
+        flight_sno=details.get("flight_sno")
         if not origin or not destination:
             # Ask Gemini to respond humanly about missing information
             reply = rewrite_flight_response(details, [])
         else:
         # Fetch flights
             flights = search_flights(origin, destination, date)
-            # print(flights)
+            print(flights)
             # print(type(flights))
         # reply = rewrite_flight_response(details, flights)
         
     if any(k in msg_lower for k in flight_keywords):
-        intent = "flight_booking"
+        intent = "flight_search"
         reply=rewrite_flight_response(details,flights)
         new_chat = Conversation(
         user_id=current_user.id,
@@ -184,30 +187,65 @@ def chat_with_bot(
         db.commit()
 
         return {"bot_response": reply, "intent": intent}
-        # Extract structured flight details using Gemini
-        # details = extract_flight_details(message)
-        # print(details)
-        # if "error" in details:
-        #     reply = "Sorry, I couldn't understand the flight details. Could you rephrase?"
-        # else:
-        #     origin = details.get("origin")
-        #     destination = details.get("destination")
-        #     date = details.get("date") or datetime.now().date().isoformat()
-
-        #     if not origin or not destination:
-        #         # Ask Gemini to respond humanly about missing information
-        #         reply = rewrite_flight_response(details, [])
-        #     else:
-        #         # Fetch flights
-        #         flights = search_flights(origin, destination, date)
-        #         print(flights)
-        #         print(type(flights))
-        #         reply = rewrite_flight_response(details, flights)
-
-                # Save in DB
 
 
         # If details missing
+    elif any(b in msg_lower for b in booking_keywords):
+        flight_sno_str=str(flight_sno)
+        intent = 'booking'
+        origin = next(iter({f["from"] for f in flights}), None)
+        destination = next(iter({f["to"] for f in flights}), None)
+        # sorted_flights = sort_flights(message, flights)
+        flight = next((f for f in flights if f["id"] ==flight_sno_str), None)
+
+        if flight:
+            airline = flight["airline"]
+            clean_price = flight["price"].replace("INR", "").strip()
+            price = float(clean_price)
+            duration = flight["duration"]
+            from_city = flight["from"]
+            to_city = flight["to"]
+            departure_time = flight["departure_time"]
+            arrival_time = flight["arrival_time"]
+            # Corrected line: Pass the full current_user object, not its ID
+            reply=select_flight(flight_sno_str,airline,price,date,from_city,to_city,departure_time,arrival_time,db,current_user)
+            # print(airline, price, duration, from_city, to_city, departure_time, arrival_time)
+        # reply = rewrite_flight_response(
+        #     {"origin": origin, "destination": destination, "date": date, "flight_sno": flight_sno_str},
+        #     flights
+        # )
+        
+        new_chat = Conversation(
+            user_id=current_user.id,
+            message=message,
+            response=json.dumps(reply),
+            intent=intent,
+            timestamp=datetime.utcnow(),
+            flight_context=flight
+        )
+        db.add(new_chat)
+        db.commit()
+        # return {
+        #     "bot_response": reply,
+        #     "intent": intent,
+        #     "origin": origin,
+        #     "destination": destination,
+        #     "date": date,
+        #     "flights": flights
+        # }
+        # if details missing
+        new_chat = Conversation(
+            user_id=current_user.id,
+            message=message,
+            response=json.dumps(reply),
+            intent=intent,
+            timestamp=datetime.utcnow(),
+            flight_context=flight
+        )
+        db.add(new_chat)
+        db.commit()
+
+        return {"bot_response": reply, "intent": intent}
 
     # General chat handled by Gemini
     history = get_conversation_history(db, current_user.id, limit=10)
@@ -232,117 +270,3 @@ def chat_with_bot(
         "bot_response": ai_reply,
         "intent": intent
     }
-    # sort_keywords=['sort','ascending','descending','arrange','asc','desc']
-    # if any(x in msg_lower for x in sort_keywords):
-    #     intent='sorting'
-        
-# from fastapi import APIRouter, Depends
-# from sqlalchemy.orm import Session
-# from datetime import datetime
-# from database import get_db
-# from models import Conversation
-# from auth import get_current_user
-# from services.gemini_service import ask_gemini, rewrite_flight_response
-# from services.amadeus_service import search_flights
-# from services.intent_extraction import extract_flight_details
-# from pydantic import BaseModel
-
-# router = APIRouter(prefix="/chat", tags=["Chat"])
-
-
-# class ChatRequest(BaseModel):
-#     message: str
-
-
-# @router.post("/message")
-# def chat_with_bot(
-#     request: ChatRequest,
-#     db: Session = Depends(get_db),
-#     current_user=Depends(get_current_user)
-# ):
-#     message = request.message
-#     msg_lower = message.lower()
-#     intent = "general"
-
-#     # Detect possible flight booking intent
-#     flight_keywords = ["flight", "book", "ticket", "del", "blr", "mumbai", "bangalore", "goa"]
-#     if any(k in msg_lower for k in flight_keywords):
-#         intent = "flight_booking"
-
-#         # Extract structured flight details using Gemini
-#         details = extract_flight_details(message)
-#         print(details)
-#         if "error" in details:
-#             reply = "Sorry, I couldn't understand the flight details. Could you rephrase?"
-#         else:
-#             origin = details.get("origin")
-#             destination = details.get("destination")
-#             date = details.get("date") or datetime.now().date().isoformat()
-
-#             if not origin or not destination:
-#                 # Ask Gemini to respond humanly about missing information
-#                 reply = rewrite_flight_response(details, [])
-#             else:
-#                 # Fetch flights
-#                 flights = search_flights(origin, destination, date)
-#                 print(flights)
-#                 print(type(flights))
-#                 reply = rewrite_flight_response(details, flights)
-
-#                 # Save in DB
-#                 new_chat = Conversation(
-#                     user_id=current_user.id,
-#                     message=message,
-#                     response=reply,
-#                     intent=intent,
-#                     timestamp=datetime.utcnow(),
-#                     flight_context=flights
-#                 )
-#                 db.add(new_chat)
-#                 db.commit()
-
-#                 return {
-#                     "bot_response": reply,
-#                     "intent": intent,
-#                     "origin": origin,
-#                     "destination": destination,
-#                     "date": date,
-#                     "flights": flights
-#                 }
-
-#         # If details missing
-#         new_chat = Conversation(
-#             user_id=current_user.id,
-#             message=message,
-#             response=reply,
-#             intent=intent,
-#             timestamp=datetime.utcnow(),
-#             flight_context=flights
-#         )
-#         db.add(new_chat)
-#         db.commit()
-
-#         return {"bot_response": reply, "intent": intent}
-
-#     # General chat handled by Gemini
-#     ai_reply = ask_gemini(message)
-
-#     new_chat = Conversation(
-#         user_id=current_user.id,
-#         message=message,
-#         response=ai_reply,
-#         intent=intent,
-#         timestamp=datetime.utcnow()
-#     )
-#     db.add(new_chat)
-#     db.commit()
-
-#     return {
-#         "bot_response": ai_reply,
-#         "intent": intent
-#     }
-#     # sort_keywords=['sort','ascending','descending','arrange','asc','desc']
-#     # if any(x in msg_lower for x in sort_keywords):
-#     #     intent='sorting'
-        
-

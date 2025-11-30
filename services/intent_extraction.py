@@ -37,15 +37,19 @@ def extract_flight_details(message: str):
     - date: a concrete calendar date in YYYY-MM-DD format or null
     - time: "morning", "afternoon", "evening", "night", or null
     - passengers: integer (default 1 if not mentioned)
+    - flight_sno: integer (dont extract flight id if not mentioned )
 
     Rules:
     - When the user says things like "tomorrow", "day after tomorrow",
       "next Monday", "next Friday", etc., you MUST compute the exact
       calendar date RELATIVE TO today's date {today}. Do NOT assume 
       any other 'today' than the one explicitly given.
+    - When user says things like "book the first one please" or "proceed with first one" or "checkout with first one", etc., it means that the flight_sno is 1. Vice versa for the rest of the numbers as well. You are supposed to return the number 2 if user says "Proceed with second one" or "lets go with second flight", etc.
     - If city names are given (e.g. Bangalore, Delhi, Mumbai), map
       them to their primary IATA codes (BLR, DEL, BOM, etc).
     - If you are unsure about a field, set it to null.
+
+
     """
 
     try:
