@@ -62,14 +62,13 @@ def rewrite_flight_response(details, flights):
     using REAL flights provided by backend and also sorts the flights when user asks to sort.
     """
     message = f"""
-    You are an AI assistant helping the user search flights and sort the flights by price or duration or on any parameter which the user asks you to do. You ate also supposed to help the user pick a flight_sno from the list of flights. ex: If the user says "I'll choose the first one" then reply respectively with something like "Sure. I'll send you the payment link of the first flight id".
+    You are an AI assistant helping the user search flights and sort the flights by price or duration or on any parameter which the user asks you to do. You ate also supposed to help the user pick a flight_sno from the list of flights. ex: If the user says "I'll choose the first one" then reply respectively with something like "Sure. I'll send you the payment link of the first flight id". 
 
     The extracted flight details:
     {details}
 
     The actual flights returned by the server:
     {flights}
-
     SORTING RULES:
     - If the user asks you to sort the list of flights in {flights} by any parameter like price or duration, you have to return the sorted flights back.
     IMPORTANT RULES:

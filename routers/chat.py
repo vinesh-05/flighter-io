@@ -71,16 +71,20 @@ def chat_with_bot(
     )
     
     if last_chat and last_chat.flight_context:
-        flights = last_chat.flight_context
-        # print(type(flights))
-        # origin_list=list({item['from'] for item in flights})
-        # origin="".join(origin_list)
-        # print(type(origin))
-        # destination_list=list({item['to'] for item in flights})
-        # destination="".join(destination_list)
-        # print(type(destination))
-        origin = next(iter({item["from"] for item in flights}), None)
-        destination = next(iter({item["to"] for item in flights}), None)
+        raw = json.loads(last_chat.flight_context)
+
+        # Ensure flights is ALWAYS a list of dicts
+        if isinstance(raw, dict):
+            flights = [raw]
+        elif isinstance(raw, list):
+            flights = raw
+        else:
+            flights = []
+
+        # Now safe
+        origin = next((item["from"] for item in flights if "from" in item), None)
+        destination = next((item["to"] for item in flights if "to" in item), None)
+
 
 
     
@@ -116,10 +120,10 @@ def chat_with_bot(
         new_chat = Conversation(
         user_id=current_user.id,
         message=message,
-        response=reply,
+        response=json.dumps(reply),
         intent=intent,
         timestamp=datetime.utcnow(),
-        flight_context=flights
+        flight_context=json.dumps(flights)
         )
         db.add(new_chat)
         db.commit()
@@ -136,10 +140,10 @@ def chat_with_bot(
         new_chat = Conversation(
             user_id=current_user.id,
             message=message,
-            response=reply,
+            response=json.dumps(reply),
             intent=intent,
             timestamp=datetime.utcnow(),
-            flight_context=flights
+            flight_context=json.dumps(flights)
         )
         db.add(new_chat)
         db.commit()
@@ -159,10 +163,10 @@ def chat_with_bot(
         new_chat = Conversation(
             user_id=current_user.id,
             message=message,
-            response=reply,
+            response=json.dumps(reply),
             intent=intent,
             timestamp=datetime.utcnow(),
-            flight_context=sort_flights(message,flights)
+            flight_context=json.dumps(sort_flights(message,flights))
         )
         db.add(new_chat)
         db.commit()
@@ -178,10 +182,10 @@ def chat_with_bot(
         new_chat = Conversation(
             user_id=current_user.id,
             message=message,
-            response=reply,
+            response=json.dumps(reply),
             intent=intent,
             timestamp=datetime.utcnow(),
-            flight_context=sort_flights(message,flights)
+            flight_context=json.dumps(sort_flights(message,flights))
         )
         db.add(new_chat)
         db.commit()
@@ -221,7 +225,7 @@ def chat_with_bot(
             response=json.dumps(reply),
             intent=intent,
             timestamp=datetime.utcnow(),
-            flight_context=flight
+            flight_context=json.dumps(flight)
         )
         db.add(new_chat)
         db.commit()
@@ -240,7 +244,7 @@ def chat_with_bot(
             response=json.dumps(reply),
             intent=intent,
             timestamp=datetime.utcnow(),
-            flight_context=flight
+            flight_context=json.dumps(flight)
         )
         db.add(new_chat)
         db.commit()

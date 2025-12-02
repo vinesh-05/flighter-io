@@ -4,8 +4,15 @@ from routers import users
 from routers import chat
 from routers import flights
 from fastapi.openapi.utils import get_openapi
+from fastapi.middleware.cors import CORSMiddleware
 app = FastAPI()
-
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Or set specific origins like ["http://localhost:5173"]
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 # Include routers
 app.include_router(users.router)
 app.include_router(chat.router)

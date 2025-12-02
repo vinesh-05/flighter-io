@@ -81,11 +81,8 @@ def select_flight(
     db.commit()
     db.refresh(booking)
 
-    return {
-        "message": "Flight selected. Complete payment using the link.",
-        "payment_url": payment_url,
-        "booking_id": booking.id
-    }
+    response= f"thank you for choosing flight {flight_id}. Please pay through this link: {payment_url}"
+    return response
 
 
 # ---------------------------
