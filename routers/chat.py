@@ -4,41 +4,21 @@ from datetime import datetime
 from database import get_db
 from models import Conversation
 from auth import get_current_user
-from services.gemini_service import ask_gemini, rewrite_flight_response
-from utils.sorting import sort_flights
+from services.main_agent import unified_agent
 from services.amadeus_service import search_flights
-from services.intent_extraction import extract_flight_details
-from pydantic import BaseModel
+from services.sorter_agent import sort_flights
 from routers.flights import select_flight
+from pydantic import BaseModel
 import json
+
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
 
 class ChatRequest(BaseModel):
     message: str
 
-def get_conversation_history(db: Session, user_id: int, limit: int = 20):
-    history = (
-        db.query(Conversation)
-        .filter(Conversation.user_id == user_id)
-        .order_by(Conversation.timestamp.desc())
-        .limit(limit)
-        .all()
-    )
 
-    # Convert DB objects → Gemini format (or OpenAI format)
-    history.reverse()  # oldest → newest
-
-    messages = []
-    for h in history:
-        messages.append({"role": "user", "content": h.message})
-        messages.append({"role": "assistant", "content": h.response})
-
-    return messages
 def get_last_flight_turn(db: Session, user_id: int):
-    """
-    Get the most recent conversation turn that has flight_context saved.
-    """
     return (
         db.query(Conversation)
         .filter(Conversation.user_id == user_id, Conversation.flight_context.isnot(None))
@@ -47,96 +27,51 @@ def get_last_flight_turn(db: Session, user_id: int):
     )
 
 
-
 @router.post("/message")
-def chat_with_bot(
+async def chat_with_bot(
     request: ChatRequest,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
     message = request.message
-    msg_lower = message.lower()
-    intent = "general"
 
-    flights=[]
-    origin=None
-    destination=None
-    date=None
-    flight_sno=None
-    last_chat = (
-    db.query(Conversation)
-    .filter(Conversation.user_id == current_user.id)
-    .order_by(Conversation.timestamp.desc())
-    .first()
-    )
-    
-    if last_chat and last_chat.flight_context:
-        raw = json.loads(last_chat.flight_context)
+    # Load last flights from DB if available
+    last_chat = get_last_flight_turn(db, current_user.id)
+    last_flights = []
 
-        # Ensure flights is ALWAYS a list of dicts
-        if isinstance(raw, dict):
-            flights = [raw]
-        elif isinstance(raw, list):
-            flights = raw
-        else:
-            flights = []
+    if last_chat:
+        try:
+            raw = json.loads(last_chat.flight_context)
+            last_flights = raw if isinstance(raw, list) else [raw]
+        except:
+            last_flights = []
 
-        # Now safe
-        origin = next((item["from"] for item in flights if "from" in item), None)
-        destination = next((item["to"] for item in flights if "to" in item), None)
-
-
-
-    
-
-    # Detect possible flight booking intent
-    booking_keywords=['booking','book','checkout','payment','pay','select']
-    flight_keywords = ["flight","flights", "show", "ticket", "del", "blr", "mumbai", "bangalore", "goa"]
-    sort_keywords=['sort','arrange','ascending','descending','asc','desc','order']
-    details=extract_flight_details(message)
+    # 🔥 ONE GEMINI CALL ONLY
+    details = unified_agent(message, last_flights)
     print(details)
-    if "error" in details:
-        reply = "Sorry, I couldn't understand the flight details. Could you rephrase?"
-    else:
-        origin = details.get("origin")
-        # print(origin)
-        # print(type(origin))
-        destination = details.get("destination")
-        date = details.get("date") or datetime.now().date().isoformat()
-        flight_sno=details.get("flight_sno")
-        if not origin or not destination:
-            # Ask Gemini to respond humanly about missing information
-            reply = rewrite_flight_response(details, [])
-        else:
-        # Fetch flights
-            flights = search_flights(origin, destination, date)
-            print(flights)
-            # print(type(flights))
-        # reply = rewrite_flight_response(details, flights)
-        
-    if any(k in msg_lower for k in flight_keywords):
-        intent = "flight_search"
-        reply=rewrite_flight_response(details,flights)
-        new_chat = Conversation(
-        user_id=current_user.id,
-        message=message,
-        response=json.dumps(reply),
-        intent=intent,
-        timestamp=datetime.utcnow(),
-        flight_context=json.dumps(flights)
-        )
-        db.add(new_chat)
-        db.commit()
+    intent = details.get("intent", "general")
+    origin = details.get("origin")
+    destination = details.get("destination")
+    date = details.get("date") or datetime.now().date().isoformat()
+    sort_intent = details.get("sort_intent")
+    flight_sno = details.get("flight_sno")
+    ai_reply = details.get("ai_reply")
+    needs_backend = details.get("needs_backend_call", False)
 
-        return {
-            "bot_response": reply,
-            "intent": intent,
-            "origin": origin,
-            "destination": destination,
-            "date": date,
-            "flights": flights
-        }
-        #if details missing
+    flights = last_flights
+
+    # -------------------------------------------
+    # 1️⃣ FLIGHT SEARCH
+    # -------------------------------------------
+    if intent == "flight_search" and needs_backend:
+        if not origin or not destination:
+            reply = ai_reply  # LLM already explained missing details
+        else:
+            flights = await search_flights(origin, destination, date)
+            print(flights)
+            reply = ai_reply  # LLM crafted a friendly message
+
+        # save chat
         new_chat = Conversation(
             user_id=current_user.id,
             message=message,
@@ -148,129 +83,94 @@ def chat_with_bot(
         db.add(new_chat)
         db.commit()
 
-        return {"bot_response": reply, "intent": intent}
-
-    elif any(sort in msg_lower for sort in sort_keywords):
-        intent = 'sorting'
-        origin = next(iter({f["from"] for f in flights}), None)
-        destination = next(iter({f["to"] for f in flights}), None)
-
-        sorted_flights = sort_flights(message, flights)
-        reply = rewrite_flight_response(
-            {"origin": origin, "destination": destination, "date": date},
-            sorted_flights
-        )
-        new_chat = Conversation(
-            user_id=current_user.id,
-            message=message,
-            response=json.dumps(reply),
-            intent=intent,
-            timestamp=datetime.utcnow(),
-            flight_context=json.dumps(sort_flights(message,flights))
-        )
-        db.add(new_chat)
-        db.commit()
         return {
             "bot_response": reply,
             "intent": intent,
+            "flights": flights,
             "origin": origin,
             "destination": destination,
-            "date": date,
-            "flights": sort_flights(message,flights)
+            "date": date
         }
-        #if details missing
+
+    # -------------------------------------------
+    # 2️⃣ SORTING
+    # -------------------------------------------
+    if intent == "sorting" and needs_backend:
+        sorted_flights = sort_flights(sort_intent, flights)
+        reply = ai_reply
+
         new_chat = Conversation(
             user_id=current_user.id,
             message=message,
             response=json.dumps(reply),
             intent=intent,
             timestamp=datetime.utcnow(),
-            flight_context=json.dumps(sort_flights(message,flights))
+            flight_context=json.dumps(sorted_flights)
         )
         db.add(new_chat)
         db.commit()
 
-        return {"bot_response": reply, "intent": intent}
+        return {
+            "bot_response": reply,
+            "intent": intent,
+            "flights": sorted_flights
+        }
 
-
-        # If details missing
-    elif any(b in msg_lower for b in booking_keywords):
-        flight_sno_str=str(flight_sno)
-        intent = 'booking'
-        origin = next(iter({f["from"] for f in flights}), None)
-        destination = next(iter({f["to"] for f in flights}), None)
-        # sorted_flights = sort_flights(message, flights)
-        flight = next((f for f in flights if f["id"] ==flight_sno_str), None)
+    # -------------------------------------------
+    # 3️⃣ BOOKING
+    # -------------------------------------------
+    if intent == "flight_booking" and needs_backend:
+        flight = next((f for f in flights if f["id"] == str(flight_sno)), None)
 
         if flight:
-            airline = flight["airline"]
-            clean_price = flight["price"].replace("INR", "").strip()
-            price = float(clean_price)
-            duration = flight["duration"]
-            from_city = flight["from"]
-            to_city = flight["to"]
-            departure_time = flight["departure_time"]
-            arrival_time = flight["arrival_time"]
-            # Corrected line: Pass the full current_user object, not its ID
-            reply=select_flight(flight_sno_str,airline,price,date,from_city,to_city,departure_time,arrival_time,db,current_user)
-            # print(airline, price, duration, from_city, to_city, departure_time, arrival_time)
-        # reply = rewrite_flight_response(
-        #     {"origin": origin, "destination": destination, "date": date, "flight_sno": flight_sno_str},
-        #     flights
-        # )
-        
+            reply = select_flight(
+                str(flight_sno),
+                flight["airline"],
+                float(flight["price"].replace("INR", "").strip()),
+                date,
+                flight["from"],
+                flight["to"],
+                flight["departure_time"],
+                flight["arrival_time"],
+                db,
+                current_user
+            )
+        else:
+            reply = "I could not find that flight number."
+
         new_chat = Conversation(
             user_id=current_user.id,
             message=message,
             response=json.dumps(reply),
             intent=intent,
             timestamp=datetime.utcnow(),
-            flight_context=json.dumps(flight)
-        )
-        db.add(new_chat)
-        db.commit()
-        # return {
-        #     "bot_response": reply,
-        #     "intent": intent,
-        #     "origin": origin,
-        #     "destination": destination,
-        #     "date": date,
-        #     "flights": flights
-        # }
-        # if details missing
-        new_chat = Conversation(
-            user_id=current_user.id,
-            message=message,
-            response=json.dumps(reply),
-            intent=intent,
-            timestamp=datetime.utcnow(),
-            flight_context=json.dumps(flight)
+            flight_context=json.dumps(flight or {})
         )
         db.add(new_chat)
         db.commit()
 
-        return {"bot_response": reply, "intent": intent}
+        return {
+            "bot_response": reply,
+            "intent": intent
+        }
 
-    # General chat handled by Gemini
-    history = get_conversation_history(db, current_user.id, limit=10)
-
-    ai_reply = ask_gemini(
-        message=message,
-        history=history
-    )
-
+    # -------------------------------------------
+    # 4️⃣ GENERAL CHAT (NO BACKEND WORK)
+    # -------------------------------------------
+    reply = ai_reply
 
     new_chat = Conversation(
         user_id=current_user.id,
         message=message,
-        response=ai_reply,
+        response=reply,
         intent=intent,
-        timestamp=datetime.utcnow()
+        timestamp=datetime.utcnow(),
+        flight_context=None
     )
     db.add(new_chat)
     db.commit()
 
     return {
-        "bot_response": ai_reply,
+        "bot_response": reply,
         "intent": intent
     }
