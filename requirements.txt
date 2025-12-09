@@ -16,3 +16,5 @@ stripe
 alembic
 google-generativeai
 psycopg2-binary
+redis
+redis[async]

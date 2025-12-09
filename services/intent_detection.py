@@ -25,23 +25,87 @@ def extract_intent(message: str):
     today = datetime.now().date().isoformat()
 
     prompt = f"""
-    You are an intent detection agent.
+    You are an advanced Intent Classification Agent for a Flight-Booking AI system.
 
     Today's date is {today}.
     The user message is: "{message}"
 
-    Task:
-    Extract the intent of the user based on their text message and return the user's intent.
-    "intent"
+    Your job:
+    1. Understand the user's message deeply — even if it is vague, indirect, slang-filled, or incomplete.
+    2. Infer hidden meaning and context like a human.
+    3. Output a JSON object containing:
+    {
+        "intent": "<one of: flight_search, flight_booking, sorting, greeting, smalltalk, other>"
+    }
 
-    Rules:
-    - When the user says "I want to book a flight", then since initially they have to be shown the list of flights, let the intent be 'flight_search'.
-    - When the user says something like "show me flights from source to destination tomorrow", let intent be 'flight_search'.
-    - When the user says "book the third flight" or "proceeed with the third one" or "checkout with the third one" or sentences with similar context then let intent be 'flight_booking'.
-    - When the user says "sort the flights from cheapest to most expensive" or "show the cheapest flight first" or "show the longest flight first" or "show the quickest flight first" or sentences with similar context let intent be 'sorting'.
+    General Rules:
+    - Be extremely accurate.
+    - Do not hallucinate flights, details, cities, or dates.
+    - Focus ONLY on the intent, not the content details.
 
+    INTENT DEFINITIONS:
+
+    1. **flight_search**
+    Trigger when the user:
+    - asks to book a flight
+    - asks to check flights
+    - mentions source, destination, or travel dates
+    - uses phrases like: "show me flights", "find flights", "I want to go to ___", 
+        "looking for flights", "tomorrow to Delhi", etc.
+    - expresses exploring options: "what flights are available", "any cheap flights?"
+
+    2. **flight_booking**
+    Trigger when:
+    - the user selects or confirms a specific option
+    - says things like:
+        "book the third flight",
+        "go ahead with the cheapest one",
+        "confirm number 2",
+        "proceed with that flight",
+        “checkout this one”
+    - OR expresses final commitment: "yes I want this flight", "confirm this", etc.
+
+    3. **sorting**
+    Trigger when:
+    - user wants sorting by price, duration, or time:
+        "sort by cheapest",
+        "show quickest first",
+        "show longest flight first",
+        "arrange from lowest to highest"
+    - Comparison-based requests: 
+        "which is the cheapest?", "show the fast ones first"
+
+    4. **greeting**
+    Trigger when:
+    - user says "hi", "hello", "good morning", "hey"
+    - simple courtesy messages.
+
+    5. **smalltalk**
+    Trigger when:
+    - user asks non-flight personal questions:
+        "how are you?",
+        "what can you do?",
+        "tell me a joke",
+        "who created you?"
+
+    6. **other**
+    Trigger when:
+    - message doesn't match any of the above categories.
+
+    Additional Intelligence Rules:
+    - Understand indirect or conversational phrasing.
+    (Example: “I’m thinking to fly to Mumbai this weekend” → flight_search)
+    - Understand multi-step reasoning.
+    (Example: “Which one is shorter? Show that first” → sorting)
+    - If the message contains both flight search and sorting:
+    → sorting should take priority.
+    - If the user expresses desire to finalize something:
+    → flight_booking.
+    - Detect intent even if the user does not use exact keywords.
+
+    Output ONLY valid JSON with the field: "intent".
+    No explanations. No natural language. Only JSON.
     """
-
     try:
         response = model.generate_content(prompt)
 
