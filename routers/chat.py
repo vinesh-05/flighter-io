@@ -19,18 +19,7 @@ class ChatRequest(BaseModel):
     message: str
 
 
-def get_last_flight_turn(db: Session, user_id: int):
-    """Returns the LAST saved conversation containing flight_context."""
-    return (
-        db.query(Conversation)
-        .filter(Conversation.user_id == user_id, Conversation.flight_context.isnot(None))
-        .order_by(Conversation.timestamp.desc())
-        .first()
-    )
-
-
 def get_last_three_messages(db: Session, user_id: int):
-    """Return last 1–3 user+bot exchanges for context memory."""
     rows = (
         db.query(Conversation)
         .filter(Conversation.user_id == user_id)
@@ -38,14 +27,9 @@ def get_last_three_messages(db: Session, user_id: int):
         .limit(3)
         .all()
     )
-
     history = []
-    for r in reversed(rows):  # oldest → newest
-        history.append({
-            "user": r.message,
-            "bot": r.response
-        })
-
+    for r in reversed(rows):
+        history.append({"user": r.message, "bot": r.response})
     return history
 
 
@@ -57,75 +41,57 @@ async def chat_with_bot(
 ):
     message = request.message.strip()
 
-    # ---------------------------------------------------------
-    # 🔥 STEP 1 — LOAD LAST 1–3 MESSAGES (Redis first)
-    # ---------------------------------------------------------
+    # -----------------------------  
+    # Load short-term message memory  
+    # -----------------------------
     redis_history = await redis_client.get(f"user:{current_user.id}:last_messages")
+    previous_messages = json.loads(redis_history) if redis_history else \
+        get_last_three_messages(db, current_user.id)
 
-    if redis_history:
-        previous_messages = json.loads(redis_history)
-    else:
-        previous_messages = get_last_three_messages(db, current_user.id)
-
-    # ---------------------------------------------------------
-    # 🔥 STEP 2 — LOAD LAST SAVED FLIGHT CONTEXT
-    # ---------------------------------------------------------
-    last_chat = get_last_flight_turn(db, current_user.id)
-    last_flights = []
-
-    if last_chat:
-        try:
-            raw = json.loads(last_chat.flight_context)
-            last_flights = raw if isinstance(raw, list) else [raw]
-        except:
-            last_flights = []
-
-    # ---------------------------------------------------------
-    # 🔥 STEP 3 — LOAD LAST ROUTE FROM REDIS
-    # ---------------------------------------------------------
+    # -----------------------------  
+    # Load last route  
+    # -----------------------------
     redis_route = await redis_client.get(f"user:{current_user.id}:last_route")
-
     if redis_route:
-        redis_route = json.loads(redis_route)
-        last_route_origin = redis_route.get("origin")
-        last_route_destination = redis_route.get("destination")
+        route = json.loads(redis_route)
+        last_route_origin = route.get("origin")
+        last_route_destination = route.get("destination")
     else:
         last_route_origin = None
         last_route_destination = None
 
-    # ---------------------------------------------------------
-    # 🔥 STEP 4 — FALLBACK FROM PREVIOUS FLIGHTS OR MESSAGES
-    # ---------------------------------------------------------
-    if last_flights:
-        first = last_flights[0]
-        last_route_origin = last_route_origin or first.get("from") or first.get("origin")
-        last_route_destination = last_route_destination or first.get("to") or first.get("destination")
+    # -----------------------------  
+    # Load last flights from DB  
+    # -----------------------------
+    last_chat = (
+        db.query(Conversation)
+        .filter(Conversation.user_id == current_user.id,
+                Conversation.flight_context.isnot(None))
+        .order_by(Conversation.timestamp.desc())
+        .first()
+    )
 
-    if not last_route_origin or not last_route_destination:
-        for msg in reversed(previous_messages):
-            try:
-                bot = json.loads(msg["bot"])
-                if not last_route_origin and bot.get("origin"):
-                    last_route_origin = bot["origin"]
-                if not last_route_destination and bot.get("destination"):
-                    last_route_destination = bot["destination"]
-            except:
-                pass
+    flights = []
+    if last_chat:
+        try:
+            flights = json.loads(last_chat.flight_context)
+            if isinstance(flights, dict):
+                flights = [flights]
+        except:
+            flights = []
 
-    # ---------------------------------------------------------
-    # 🔥 STEP 5 — ONE GEMINI CALL (SUPREME AGENT)
-    # ---------------------------------------------------------
+    # -----------------------------  
+    # Call Unified AI Agent  
+    # -----------------------------
     details = unified_agent(
         message,
-        backend_flights=last_flights,
+        backend_flights=flights,
         previous_messages=previous_messages,
         last_route_origin=last_route_origin,
         last_route_destination=last_route_destination
     )
+    print(details)
 
-    print("\nAI DETAILS →", details, "\n")
-
-    # Extract details
     intent = details.get("intent", "general")
     origin = details.get("origin")
     destination = details.get("destination")
@@ -135,19 +101,14 @@ async def chat_with_bot(
     ai_reply = details.get("ai_reply")
     needs_backend = details.get("needs_backend_call", False)
 
-    flights = last_flights
-
-    # ---------------------------------------------------------
-    # ⚠️ SPECIAL CASE: COUNTRY DESTINATION
-    # ---------------------------------------------------------
-    if intent == "flight_search" and origin and destination is None:
-        reply = ai_reply
-
-        # Save conversation
+    # -----------------------------  
+    # ⚠ CASE: Destination is country → ask clarification  
+    # -----------------------------
+    if intent == "flight_search" and destination is None and "airport" in ai_reply.lower():
         new_chat = Conversation(
             user_id=current_user.id,
             message=message,
-            response=json.dumps(reply),
+            response=json.dumps(ai_reply),
             intent="clarification_needed",
             timestamp=datetime.utcnow(),
             flight_context=None
@@ -155,84 +116,43 @@ async def chat_with_bot(
         db.add(new_chat)
         db.commit()
 
-        # Update only messages in Redis
         await redis_client.set(
             f"user:{current_user.id}:last_messages",
-            json.dumps(previous_messages + [{"user": message, "bot": reply}]),
+            json.dumps(previous_messages + [{"user": message, "bot": ai_reply}]),
             ex=3600
         )
 
-        return {
-            "bot_response": reply,
-            "intent": "clarification_needed"
-        }
+        return {"bot_response": ai_reply, "intent": "clarification_needed"}
 
-    # ---------------------------------------------------------
-    # 1️⃣ FLIGHT SEARCH
-    # ---------------------------------------------------------
+    # -----------------------------  
+    # 1️⃣ FLIGHT SEARCH  
+    # -----------------------------
     if intent == "flight_search" and needs_backend:
 
+        # RESET: old routes, flights, booking state
+        await redis_client.delete(f"user:{current_user.id}:last_route")
+
+        # If missing fields → return AI reply only
         if not origin or not destination:
             reply = ai_reply
+            flights = []
         else:
             flights = await search_flights(origin, destination, date)
             reply = ai_reply
 
+        # Save new search results
         new_chat = Conversation(
             user_id=current_user.id,
             message=message,
             response=json.dumps(reply),
-            intent=intent,
+            intent="flight_search",
             timestamp=datetime.utcnow(),
             flight_context=json.dumps(flights)
         )
         db.add(new_chat)
         db.commit()
 
-        # Save new route ONLY if valid
-        if origin and destination:
-            await redis_client.set(
-                f"user:{current_user.id}:last_route",
-                json.dumps({"origin": origin, "destination": destination}),
-                ex=3600
-            )
-
-        # Always save messages
-        await redis_client.set(
-            f"user:{current_user.id}:last_messages",
-            json.dumps(previous_messages + [{"user": message, "bot": reply}]),
-            ex=3600
-        )
-
-        return {
-            "bot_response": reply,
-            "intent": intent,
-            "flights": flights,
-            "origin": origin,
-            "destination": destination,
-            "date": date
-        }
-
-    # ---------------------------------------------------------
-    # 2️⃣ SORTING
-    # ---------------------------------------------------------
-    if intent == "sorting" and needs_backend:
-
-        sorted_flights = sort_flights(sort_intent, flights)
-        reply = ai_reply
-
-        new_chat = Conversation(
-            user_id=current_user.id,
-            message=message,
-            response=json.dumps(reply),
-            intent=intent,
-            timestamp=datetime.utcnow(),
-            flight_context=json.dumps(sorted_flights)
-        )
-        db.add(new_chat)
-        db.commit()
-
-        # Save route if valid
+        # Set new route
         if origin and destination:
             await redis_client.set(
                 f"user:{current_user.id}:last_route",
@@ -250,17 +170,57 @@ async def chat_with_bot(
         return {
             "bot_response": reply,
             "intent": intent,
-            "flights": sorted_flights
+            "flights": flights,
+            "origin": origin,
+            "destination": destination,
+            "date": date
         }
 
-    # ---------------------------------------------------------
-    # 3️⃣ BOOKING
-    # ---------------------------------------------------------
+    # -----------------------------  
+    # 2️⃣ SORTING  
+    # -----------------------------
+    if intent == "sorting" and needs_backend:
+
+        sorted_flights = sort_flights(sort_intent, flights)
+        reply = ai_reply
+
+        new_chat = Conversation(
+            user_id=current_user.id,
+            message=message,
+            response=json.dumps(reply),
+            intent=intent,
+            timestamp=datetime.utcnow(),
+            flight_context=json.dumps(sorted_flights)
+        )
+        db.add(new_chat)
+        db.commit()
+
+        # Save messages
+        await redis_client.set(
+            f"user:{current_user.id}:last_messages",
+            json.dumps(previous_messages + [{"user": message, "bot": reply}]),
+            ex=3600
+        )
+
+        return {"bot_response": reply, "intent": intent, "flights": sorted_flights}
+
+    # -----------------------------  
+    # 3️⃣ BOOKING  
+    # -----------------------------
     if intent == "flight_booking" and needs_backend:
 
-        flight = next((f for f in flights if f["id"] == str(flight_sno)), None)
+        # Fail-safe
+        if isinstance(flights, dict):
+            flights = [flights]
 
-        if flight:
+        flight = next((f for f in flights if f.get("id") == str(flight_sno)), None)
+
+        if not flight:
+            reply = (
+                "I couldn’t locate that flight number in the latest search results. "
+                "Please select a flight from the currently displayed list."
+            )
+        else:
             reply = select_flight(
                 str(flight_sno),
                 flight["airline"],
@@ -273,49 +233,35 @@ async def chat_with_bot(
                 db,
                 current_user
             )
-        else:
-            reply = "I could not find that flight number."
 
         new_chat = Conversation(
             user_id=current_user.id,
             message=message,
             response=json.dumps(reply),
-            intent=intent,
+            intent="flight_booking",
             timestamp=datetime.utcnow(),
-            flight_context=json.dumps(flight or {})
+            flight_context=json.dumps(flights)  # keep full list
         )
         db.add(new_chat)
         db.commit()
 
-        # Save route if valid
-        if origin and destination:
-            await redis_client.set(
-                f"user:{current_user.id}:last_route",
-                json.dumps({"origin": origin, "destination": destination}),
-                ex=3600
-            )
+        await redis_client.delete(f"user:{current_user.id}:last_messages")
 
-        # Save message memory
         await redis_client.set(
             f"user:{current_user.id}:last_messages",
             json.dumps(previous_messages + [{"user": message, "bot": reply}]),
             ex=3600
         )
 
-        return {
-            "bot_response": reply,
-            "intent": intent
-        }
-
-    # ---------------------------------------------------------
-    # 4️⃣ GENERAL / SMALLTALK
-    # ---------------------------------------------------------
-    reply = ai_reply
-
+        return {"bot_response": reply, "intent": intent}
+        
+    # -----------------------------  
+    # 4️⃣ GENERAL  
+    # -----------------------------
     new_chat = Conversation(
         user_id=current_user.id,
         message=message,
-        response=reply,
+        response=ai_reply,
         intent=intent,
         timestamp=datetime.utcnow(),
         flight_context=None
@@ -323,22 +269,10 @@ async def chat_with_bot(
     db.add(new_chat)
     db.commit()
 
-    # Save route if valid
-    if origin and destination:
-        await redis_client.set(
-            f"user:{current_user.id}:last_route",
-            json.dumps({"origin": origin, "destination": destination}),
-            ex=3600
-        )
-
-    # Save last messages
     await redis_client.set(
         f"user:{current_user.id}:last_messages",
-        json.dumps(previous_messages + [{"user": message, "bot": reply}]),
+        json.dumps(previous_messages + [{"user": message, "bot": ai_reply}]),
         ex=3600
     )
-
-    return {
-        "bot_response": reply,
-        "intent": intent
-    }
+    
+    return {"bot_response": ai_reply, "intent": intent}

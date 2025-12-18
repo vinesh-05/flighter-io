@@ -35,7 +35,7 @@ class FlightBooking(Base):
     payment_url = Column(String)          # new
 
     timestamp = Column(DateTime, default=datetime.utcnow)  # new
-
+    stripe_session_id = Column(String, nullable=True)
     user = relationship("User", back_populates="bookings")
 class Conversation(Base):
     __tablename__ = "conversations"

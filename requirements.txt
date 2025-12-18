@@ -18,3 +18,4 @@ google-generativeai
 psycopg2-binary
 redis
 redis[async]
+reportlab

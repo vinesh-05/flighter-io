@@ -5,6 +5,9 @@ from database import get_db
 from models import FlightBooking
 import stripe
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 router = APIRouter(prefix="/flights", tags=["Flights"])
 
@@ -16,6 +19,10 @@ if not STRIPE_SECRET_KEY:
 
 stripe.api_key = STRIPE_SECRET_KEY
 
+from pydantic import BaseModel
+
+class ConfirmRequest(BaseModel):
+    session_id: str
 
 # ----------------------------------------------------------
 # 1️⃣  SELECT FLIGHT → CREATE BOOKING → GENERATE PAYMENT LINK
@@ -53,14 +60,18 @@ def select_flight(
                 'quantity': 1,
             }],
             mode='payment',
-            success_url="https://example.com/success?session_id={CHECKOUT_SESSION_ID}",
-            cancel_url="https://example.com/cancel",
+            success_url="https://flighter-io-frontend.vercel.app/success?session_id={CHECKOUT_SESSION_ID}",
+            cancel_url="https://flighter-io-frontend.vercel.app/cancel",
         )
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Stripe error: {str(e)}")
 
     payment_url = checkout_session.url
+    print("SESSION URL:", payment_url)
+    print("NEW CHECKOUT SESSION:", checkout_session.id)
+    print("NEW CHECKOUT URL:", checkout_session.url)
+
 
     # Save booking
     booking = FlightBooking(
@@ -74,7 +85,8 @@ def select_flight(
         departure_time=departure_time,
         arrival_time=arrival_time,
         status="pending",
-        payment_url=payment_url
+        payment_url=payment_url,
+        stripe_session_id=checkout_session.id  # ← ADD THIS
     )
 
     db.add(booking)
@@ -88,37 +100,30 @@ def select_flight(
 # ---------------------------
 # 2️⃣ CONFIRM BOOKING (manual confirm)
 # ---------------------------
-@router.post("/confirm")
-def confirm_booking(
-    booking_id: int,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)
-):
-    """
-    Mark booking as paid (manual confirmation for now).
-    """
+@router.post("/confirm-payment")
+def confirm_payment(payload: ConfirmRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    session_id = payload.session_id
 
     booking = db.query(FlightBooking)\
-        .filter(FlightBooking.id == booking_id,
-                FlightBooking.user_id == current_user.id)\
+        .filter(FlightBooking.stripe_session_id == session_id)\
         .first()
 
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
 
+    # Mark booking as paid
     booking.status = "paid"
     db.commit()
 
-    return {
-        "message": "Payment confirmed. Your flight is booked!",
-        "booking_details": {
-            "airline": booking.airline,
-            "from": booking.origin,
-            "to": booking.destination,
-            "date": booking.date,
-            "price": booking.price
-        }
-    }
+    # Generate ticket
+    from utils.generate_ticket import create_ticket_pdf
+    pdf_path = create_ticket_pdf(booking)
+
+    # Email to user
+    from utils.emailer import send_ticket_email
+    send_ticket_email(current_user.email, pdf_path)
+
+    return {"message": "Payment confirmed. Ticket emailed."}
 
 
 # ---------------------------

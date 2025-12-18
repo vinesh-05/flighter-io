@@ -83,9 +83,8 @@ async def search_flights(origin: str, destination: str, departure_date: str):
 
     if response.status_code != 200:
         return {"error": response.text}
-
     data = response.json()
-
+    
     flights = []
     AIRLINE_NAMES = {
         "AI": "Air India", "6E": "IndiGo", "UK": "Vistara",
