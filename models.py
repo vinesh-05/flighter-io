@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime, Float
+from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime, Float, Boolean
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from database import Base
@@ -36,6 +36,8 @@ class FlightBooking(Base):
 
     timestamp = Column(DateTime, default=datetime.utcnow)  # new
     stripe_session_id = Column(String, nullable=True)
+    email_sent = Column(Boolean, default=False)
+    email_attempts = Column(Integer, default=0)
     user = relationship("User", back_populates="bookings")
 class Conversation(Base):
     __tablename__ = "conversations"
