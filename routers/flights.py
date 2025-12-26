@@ -6,6 +6,8 @@ from models import FlightBooking
 import stripe
 import os
 from dotenv import load_dotenv
+from fastapi import Request
+
 
 load_dotenv()
 
@@ -100,44 +102,46 @@ def select_flight(
 # ---------------------------
 # 2️⃣ CONFIRM BOOKING (manual confirm)
 # ---------------------------
-@router.post("/confirm-payment")
-def confirm_payment(payload: ConfirmRequest, db: Session = Depends(get_db)):
-    session_id = payload.session_id
 
-    # 🔐 Verify payment with Stripe (server-side)
+@router.post("/stripe/webhook")
+async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
+    payload = await request.body()
+    sig_header = request.headers.get("stripe-signature")
+
     try:
-        session = stripe.checkout.Session.retrieve(session_id)
+        event = stripe.Webhook.construct_event(
+            payload,
+            sig_header,
+            os.getenv("WEBHOOK_SECRET")
+        )
+    except stripe.error.SignatureVerificationError:
+        raise HTTPException(status_code=400, detail="Invalid Stripe signature")
     except Exception:
-        raise HTTPException(status_code=400, detail="Invalid Stripe session")
+        raise HTTPException(status_code=400, detail="Invalid payload")
 
-    if session.payment_status != "paid":
-        raise HTTPException(status_code=400, detail="Payment not completed")
+    # ✅ Payment completed
+    if event["type"] == "checkout.session.completed":
+        session = event["data"]["object"]
+        session_id = session["id"]
 
-    booking = db.query(FlightBooking)\
-        .filter(FlightBooking.stripe_session_id == session_id)\
-        .first()
+        booking = db.query(FlightBooking)\
+            .filter(FlightBooking.stripe_session_id == session_id)\
+            .first()
 
-    if not booking:
-        raise HTTPException(status_code=404, detail="Booking not found")
+        if booking and booking.status != "paid":
+            booking.status = "paid"
+            db.commit()
 
-    # ✅ Idempotency check
-    if booking.status == "paid":
-        return {"message": "Payment already confirmed"}
+            # Generate ticket
+            from utils.generate_ticket import create_ticket_pdf
+            pdf_path = create_ticket_pdf(booking)
 
-    booking.status = "paid"
-    db.commit()
+            # Email from Stripe (SAFE)
+            email = session["customer_details"]["email"]
+            from utils.emailer import send_ticket_email
+            send_ticket_email(email, pdf_path)
 
-    # Generate ticket
-    from utils.generate_ticket import create_ticket_pdf
-    pdf_path = create_ticket_pdf(booking)
-
-    # Get email from Stripe session (SAFE)
-    email = session.customer_details.email
-
-    from utils.emailer import send_ticket_email
-    send_ticket_email(email, pdf_path)
-
-    return {"message": "Payment confirmed. Ticket emailed."}
+    return {"status": "ok"}
 
 # ---------------------------
 # 3️⃣ GET BOOKING HISTORY
