@@ -7,7 +7,7 @@ import stripe
 import os
 from dotenv import load_dotenv
 from fastapi import Request
-
+from utils.postPayment import post_payment_tasks
 
 load_dotenv()
 
@@ -106,20 +106,17 @@ def select_flight(
 @router.post("/stripe/webhook")
 async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     payload = await request.body()
-    sig_header = request.headers.get("stripe-signature")
+    sig = request.headers.get("stripe-signature")
 
     try:
         event = stripe.Webhook.construct_event(
             payload,
-            sig_header,
-            os.getenv("WEBHOOK_SECRET")
+            sig,
+            os.getenv("STRIPE_WEBHOOK_SECRET")
         )
-    except stripe.error.SignatureVerificationError:
-        raise HTTPException(status_code=400, detail="Invalid Stripe signature")
     except Exception:
-        raise HTTPException(status_code=400, detail="Invalid payload")
+        return {"ok": False}
 
-    # ✅ Payment completed
     if event["type"] == "checkout.session.completed":
         session = event["data"]["object"]
         session_id = session["id"]
@@ -132,14 +129,13 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
             booking.status = "paid"
             db.commit()
 
-            # Generate ticket
-            from utils.generate_ticket import create_ticket_pdf
-            pdf_path = create_ticket_pdf(booking)
-
-            # Email from Stripe (SAFE)
-            email = session["customer_details"]["email"]
-            from utils.emailer import send_ticket_email
-            send_ticket_email(email, pdf_path)
+            # 🚀 Fire-and-forget background task
+            from threading import Thread
+            Thread(
+                target=post_payment_tasks,
+                args=(booking.id, session["customer_details"]["email"]),
+                daemon=True
+            ).start()
 
     return {"status": "ok"}
 
