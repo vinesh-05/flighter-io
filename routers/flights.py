@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from auth import get_current_user
 from database import get_db
@@ -15,7 +15,7 @@ router = APIRouter(prefix="/flights", tags=["Flights"])
 
 # Load Stripe secret key
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")
-
+WEBHOOK_SECRET=os.getenv("WEBHOOK_SECRET")
 if not STRIPE_SECRET_KEY:
     print("⚠️ WARNING: STRIPE_SECRET_KEY not found in .env")
 
@@ -104,38 +104,53 @@ def select_flight(
 # ---------------------------
 
 @router.post("/stripe/webhook")
-async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
+async def stripe_webhook(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
     payload = await request.body()
-    sig = request.headers.get("stripe-signature")
+    sig_header = request.headers.get("stripe-signature")
 
     try:
         event = stripe.Webhook.construct_event(
             payload,
-            sig,
-            os.getenv("STRIPE_WEBHOOK_SECRET")
+            sig_header,
+            WEBHOOK_SECRET,
         )
     except Exception:
-        return {"ok": False}
+        # Stripe expects 2xx to stop retries
+        return {"status": "ignored"}
 
+    # --------------------------------------------------
+    # PAYMENT COMPLETED
+    # --------------------------------------------------
     if event["type"] == "checkout.session.completed":
         session = event["data"]["object"]
         session_id = session["id"]
+        email = session["customer_details"]["email"]
 
-        booking = db.query(FlightBooking)\
-            .filter(FlightBooking.stripe_session_id == session_id)\
+        booking = (
+            db.query(FlightBooking)
+            .filter(FlightBooking.stripe_session_id == session_id)
             .first()
+        )
 
-        if booking and booking.status != "paid":
+        if not booking:
+            return {"status": "booking_not_found"}
+
+        # Mark booking paid (idempotent)
+        if booking.status != "paid":
             booking.status = "paid"
             db.commit()
 
-            # 🚀 Fire-and-forget background task
-            from threading import Thread
-            Thread(
-                target=post_payment_tasks,
-                args=(booking.id, session["customer_details"]["email"]),
-                daemon=True
-            ).start()
+        # Fire async job ONLY if email not sent
+        if not booking.email_sent:
+            background_tasks.add_task(
+                post_payment_tasks,
+                booking.id,
+                email,
+            )
 
     return {"status": "ok"}
 
