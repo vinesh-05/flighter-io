@@ -101,7 +101,7 @@ def select_flight(
 # 2️⃣ CONFIRM BOOKING (manual confirm)
 # ---------------------------
 @router.post("/confirm-payment")
-def confirm_payment(payload: ConfirmRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def confirm_payment(payload: ConfirmRequest, db: Session = Depends(get_db)):
     session_id = payload.session_id
 
     booking = db.query(FlightBooking)\
@@ -121,7 +121,7 @@ def confirm_payment(payload: ConfirmRequest, db: Session = Depends(get_db), curr
 
     # Email to user
     from utils.emailer import send_ticket_email
-    send_ticket_email(current_user.email, pdf_path)
+    send_ticket_email(booking.email, pdf_path)
 
     return {"message": "Payment confirmed. Ticket emailed."}
 
