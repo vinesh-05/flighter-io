@@ -104,6 +104,15 @@ def select_flight(
 def confirm_payment(payload: ConfirmRequest, db: Session = Depends(get_db)):
     session_id = payload.session_id
 
+    # 🔐 Verify payment with Stripe (server-side)
+    try:
+        session = stripe.checkout.Session.retrieve(session_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid Stripe session")
+
+    if session.payment_status != "paid":
+        raise HTTPException(status_code=400, detail="Payment not completed")
+
     booking = db.query(FlightBooking)\
         .filter(FlightBooking.stripe_session_id == session_id)\
         .first()
@@ -111,7 +120,10 @@ def confirm_payment(payload: ConfirmRequest, db: Session = Depends(get_db)):
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
 
-    # Mark booking as paid
+    # ✅ Idempotency check
+    if booking.status == "paid":
+        return {"message": "Payment already confirmed"}
+
     booking.status = "paid"
     db.commit()
 
@@ -119,12 +131,13 @@ def confirm_payment(payload: ConfirmRequest, db: Session = Depends(get_db)):
     from utils.generate_ticket import create_ticket_pdf
     pdf_path = create_ticket_pdf(booking)
 
-    # Email to user
+    # Get email from Stripe session (SAFE)
+    email = session.customer_details.email
+
     from utils.emailer import send_ticket_email
-    send_ticket_email(booking.email, pdf_path)
+    send_ticket_email(email, pdf_path)
 
     return {"message": "Payment confirmed. Ticket emailed."}
-
 
 # ---------------------------
 # 3️⃣ GET BOOKING HISTORY
