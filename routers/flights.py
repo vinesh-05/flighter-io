@@ -16,6 +16,7 @@ router = APIRouter(prefix="/flights", tags=["Flights"])
 # Load Stripe secret key
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")
 WEBHOOK_SECRET=os.getenv("WEBHOOK_SECRET")
+WEBHOOK_LOCAL=os.getenv("WEBHOOK_LOCAL")
 if not STRIPE_SECRET_KEY:
     print("⚠️ WARNING: STRIPE_SECRET_KEY not found in .env")
 
@@ -109,6 +110,8 @@ async def stripe_webhook(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
+    print("🔥 Stripe webhook hit")  # <-- HERE (top of route)
+
     payload = await request.body()
     sig_header = request.headers.get("stripe-signature")
 
@@ -116,15 +119,12 @@ async def stripe_webhook(
         event = stripe.Webhook.construct_event(
             payload,
             sig_header,
-            WEBHOOK_SECRET,
+            WEBHOOK_LOCAL,
         )
-    except Exception:
-        # Stripe expects 2xx to stop retries
+    except Exception as e:
+        print("❌ Webhook signature verification failed:", e)
         return {"status": "ignored"}
 
-    # --------------------------------------------------
-    # PAYMENT COMPLETED
-    # --------------------------------------------------
     if event["type"] == "checkout.session.completed":
         session = event["data"]["object"]
         session_id = session["id"]
@@ -137,14 +137,15 @@ async def stripe_webhook(
         )
 
         if not booking:
+            print("❌ Booking not found for session", session_id)
             return {"status": "booking_not_found"}
 
-        # Mark booking paid (idempotent)
+        print("🔥 Scheduling background task for booking", booking.id)  # <-- HERE
+
         if booking.status != "paid":
             booking.status = "paid"
             db.commit()
 
-        # Fire async job ONLY if email not sent
         if not booking.email_sent:
             background_tasks.add_task(
                 post_payment_tasks,
@@ -153,6 +154,7 @@ async def stripe_webhook(
             )
 
     return {"status": "ok"}
+
 
 # ---------------------------
 # 3️⃣ GET BOOKING HISTORY
