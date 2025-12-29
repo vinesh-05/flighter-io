@@ -43,9 +43,20 @@ def custom_openapi():
             "bearerFormat": "JWT"
         }
     }
-    for path in openapi_schema["paths"].values():
-        for method in path.values():
+    PUBLIC_PATHS = [
+        "/users/login",
+        "/users/register",
+        "/flights/stripe/webhook",
+        "/",
+    ]
+
+    for path, methods in openapi_schema["paths"].items():
+        if path in PUBLIC_PATHS:
+            continue
+
+        for method in methods.values():
             method["security"] = [{"BearerAuth": []}]
+
     app.openapi_schema = openapi_schema
     return app.openapi_schema
 
