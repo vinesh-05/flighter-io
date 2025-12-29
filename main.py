@@ -8,9 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://flighter-io-frontend.vercel.app",
-                   "http://localhost:5173"
-                   ], 
+    allow_origins=["*"],  # Or set specific origins like ["http://localhost:5173"]
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -43,20 +41,9 @@ def custom_openapi():
             "bearerFormat": "JWT"
         }
     }
-    PUBLIC_PATHS = [
-        "/users/login",
-        "/users/register",
-        "/flights/stripe/webhook",
-        "/",
-    ]
-
-    for path, methods in openapi_schema["paths"].items():
-        if path in PUBLIC_PATHS:
-            continue
-
-        for method in methods.values():
+    for path in openapi_schema["paths"].values():
+        for method in path.values():
             method["security"] = [{"BearerAuth": []}]
-
     app.openapi_schema = openapi_schema
     return app.openapi_schema
 
