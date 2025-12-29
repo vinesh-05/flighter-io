@@ -1,19 +1,51 @@
-import smtplib
-from email.message import EmailMessage
+import os
+import base64
+import requests
 
 def send_ticket_email(to_email: str, pdf_path: str):
-    msg = EmailMessage()
-    msg["Subject"] = "Your Flight Ticket"
-    msg["From"] = "yourgmail@gmail.com"
-    msg["To"] = to_email
-    msg.set_content("Your booking is confirmed. Your flight ticket PDF is attached.")
+    BREVO_API_KEY = os.getenv("BREVO_API_KEY")
+
+    if not BREVO_API_KEY:
+        raise RuntimeError("BREVO_API_KEY not configured")
 
     with open(pdf_path, "rb") as f:
-        file_data = f.read()
-        filename = pdf_path.split("/")[-1]
+        pdf_base64 = base64.b64encode(f.read()).decode()
 
-    msg.add_attachment(file_data, maintype="application", subtype="pdf", filename=filename)
+    payload = {
+        "sender": {
+            "name": "Flighter AI",
+            "email": "ai.flighter.io@gmail.com"  # can be any verified sender
+        },
+        "to": [
+            {"email": to_email}
+        ],
+        "subject": "Your Flight Ticket",
+        "htmlContent": """
+            <p>Your booking is confirmed.</p>
+            <p>Your flight ticket is attached.</p>
+            <p>Thank you for choosing Flighter ✈️</p>
+        """,
+        "attachment": [
+            {
+                "content": pdf_base64,
+                "name": "flight_ticket.pdf"
+            }
+        ]
+    }
 
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
-        smtp.login("ai.flighter.io@gmail.com", "stjb csnx wnqc kggx")
-        smtp.send_message(msg)
+    headers = {
+        "api-key": BREVO_API_KEY,
+        "Content-Type": "application/json",
+    }
+
+    response = requests.post(
+        "https://api.brevo.com/v3/smtp/email",
+        headers=headers,
+        json=payload,
+        timeout=10,
+    )
+
+    if response.status_code >= 400:
+        raise RuntimeError(
+            f"Brevo email failed: {response.status_code} {response.text}"
+        )
