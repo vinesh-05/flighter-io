@@ -1,10 +1,11 @@
 import json
 from datetime import datetime
 import os
-import google.generativeai as genai
+from groq import Groq
 
-genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
-model = genai.GenerativeModel("gemini-2.5-flash-lite")
+client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+
+MODEL_NAME = "llama-3.1-8b-instant"
 
 UNIFIED_PROMPT = """
 You are a professional AI assistant that helps users search, sort, and book flights.
@@ -29,6 +30,13 @@ Your job:
 6. If booking → extract flight_sno.
 7. If user mentions a COUNTRY (Thailand, USA, Europe, etc.) → DO NOT guess airport. Ask politely.
 8. Always follow the last known route unless user overrides it.
+9. ALWAYS convert city names (Mumbai, Delhi, Bangalore, etc.) into valid
+   3-letter IATA airport codes (BOM, DEL, BLR, etc.) before output.
+10. Output ONLY 3-letter uppercase IATA codes for origin and destination.
+11. If multiple airports exist for a city (e.g., London, New York),
+    ask the user to clarify instead of guessing.
+12. If conversion is not possible, set origin or destination as null.
+
 
 INTENTS:
 - "flight_search"
@@ -57,9 +65,13 @@ Your JSON format:
 }
 """
 
-def unified_agent(message, backend_flights=None, previous_messages=None,
-                  last_route_origin=None, last_route_destination=None):
-
+def unified_agent(
+    message,
+    backend_flights=None,
+    previous_messages=None,
+    last_route_origin=None,
+    last_route_destination=None,
+):
     today = datetime.now().date().isoformat()
 
     flights_text = json.dumps(backend_flights or [])
@@ -80,13 +92,21 @@ BACKEND_FLIGHTS:
 """
 
     try:
-        response = model.generate_content([{"role": "user", "parts": [prompt]}])
-        text = response.text.strip()
+        response = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0,
+        )
+
+        text = response.choices[0].message.content.strip()
 
         if text.startswith("```"):
             text = text.split("```")[1].replace("json", "").strip()
 
         data = json.loads(text)
+
         # FORCE backend call for booking
         if data.get("intent") == "flight_booking":
             data["needs_backend_call"] = True

@@ -16,7 +16,7 @@ FLIGHT_SEARCH_URL = "https://test.api.amadeus.com/v2/shopping/flight-offers"
 
 
 async def get_access_token():
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=20) as client:
         response = await client.post(
             TOKEN_URL,
             data={
@@ -25,7 +25,17 @@ async def get_access_token():
                 "client_secret": AMADEUS_CLIENT_SECRET,
             }
         )
-        return response.json()["access_token"]
+
+    if response.status_code != 200:
+        raise RuntimeError(
+            f"Amadeus token failed: {response.status_code} → {response.text}"
+        )
+
+    data = response.json()
+    if "access_token" not in data:
+        raise RuntimeError("Amadeus token missing in response")
+
+    return data["access_token"]
 
 
 def convert_eur_to_inr(amount_eur: float):
@@ -64,7 +74,12 @@ async def search_flights(origin: str, destination: str, departure_date: str):
     # --------------------------
     # 🔐 Get new access token
     # --------------------------
-    token = await get_access_token()
+    
+    try:
+        token = await get_access_token()
+    except Exception as e:
+        raise RuntimeError(f"Amadeus AUTH ERROR: {str(e)}")
+
 
     headers = {"Authorization": f"Bearer {token}"}
 
@@ -82,7 +97,10 @@ async def search_flights(origin: str, destination: str, departure_date: str):
         )
 
     if response.status_code != 200:
-        return {"error": response.text}
+        raise RuntimeError(
+            f"Amadeus SEARCH failed: {response.status_code} → {response.text}"
+        )
+
     data = response.json()
     
     flights = []
