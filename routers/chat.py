@@ -66,9 +66,12 @@ async def chat_with_bot(
         route = json.loads(redis_route)
         last_route_origin = route.get("origin")
         last_route_destination = route.get("destination")
+        last_route_date = route.get("date")
+
     else:
         last_route_origin = None
         last_route_destination = None
+        last_route_date=None
 
     # -----------------------------  
     # Load last flights from DB  
@@ -167,12 +170,16 @@ async def chat_with_bot(
         db.commit()
 
         # Set new route
-        if origin and destination:
-            await redis_client.set(
-                f"user:{current_user.id}:last_route",
-                json.dumps({"origin": origin, "destination": destination}),
-                ex=3600
-            )
+        await redis_client.set(
+            f"user:{current_user.id}:last_route",
+            json.dumps({
+                "origin": origin,
+                "destination": destination,
+                "date": date
+            }),
+            ex=3600
+        )
+
 
         # Save messages
         await redis_client.set(
@@ -239,7 +246,7 @@ async def chat_with_bot(
                 str(flight_sno),
                 flight["airline"],
                 float(flight["price"].replace("INR", "").strip()),
-                date,
+                last_route_date or date,
                 flight["from"],
                 flight["to"],
                 flight["departure_time"],
