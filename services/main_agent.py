@@ -23,7 +23,12 @@ You receive:
 
 Your job:
 1. Detect the user's intent.
-2. Extract ORIGIN, DESTINATION, DATE.
+2. Extract ORIGIN, DESTINATION, and DATE INTENT.
+   - If user provides a full explicit date with year, output it in YYYY-MM-DD.
+   - If the date is partial or relative (e.g. "4th Jan", "tomorrow", "next week"),
+     set "date": null.
+   - NEVER guess or compute the year.
+
 3. Understand when user is referring to the latest search results.
 4. If user gives a NEW ROUTE → mark needs_backend_call = true.
 5. If sorting → extract sort_intent.
@@ -36,6 +41,7 @@ Your job:
 11. If multiple airports exist for a city (e.g., London, New York),
     ask the user to clarify instead of guessing.
 12. If conversion is not possible, set origin or destination as null.
+13. If there is any ambiguity about the year, set "date": null.
 
 
 INTENTS:

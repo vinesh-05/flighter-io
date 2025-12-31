@@ -11,6 +11,16 @@ from routers.flights import select_flight
 from services.redis_client import redis_client
 from pydantic import BaseModel
 import json
+from datetime import date as dt_date
+
+def ensure_future_date(date_str: str) -> str:
+    d = dt_date.fromisoformat(date_str)
+    today = dt_date.today()
+
+    if d < today:
+        return d.replace(year=today.year + 1).isoformat()
+
+    return d.isoformat()
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
@@ -95,7 +105,11 @@ async def chat_with_bot(
     intent = details.get("intent", "general")
     origin = details.get("origin")
     destination = details.get("destination")
-    date = details.get("date") or datetime.now().date().isoformat()
+    date = details.get("date")
+    if date:
+        date = ensure_future_date(date)
+    else:
+        date = datetime.now().date().isoformat()
     sort_intent = details.get("sort_intent")
     flight_sno = details.get("flight_sno")
     ai_reply = details.get("ai_reply")
