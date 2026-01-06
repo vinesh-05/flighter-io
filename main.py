@@ -4,6 +4,7 @@ from routers import users
 from routers import chat
 from routers import flights
 from fastapi.openapi.utils import get_openapi
+from routers import ticket_listing
 from fastapi.middleware.cors import CORSMiddleware
 app = FastAPI()
 app.add_middleware(
@@ -17,6 +18,7 @@ app.add_middleware(
 app.include_router(users.router)
 app.include_router(chat.router)
 app.include_router(flights.router)
+app.include_router(ticket_listing.router)
 # Create tables
 Base.metadata.create_all(bind=engine)
 

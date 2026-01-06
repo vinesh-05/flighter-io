@@ -164,10 +164,12 @@ def get_booking_history(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
-    bookings = db.query(FlightBooking)\
-        .filter(FlightBooking.user_id == current_user.id)\
-        .order_by(FlightBooking.timestamp.desc())\
+    bookings = (
+        db.query(FlightBooking)
+        .filter(FlightBooking.user_id == current_user.id)
+        .order_by(FlightBooking.timestamp.desc())
         .all()
+    )
 
     return [
         {
@@ -178,7 +180,7 @@ def get_booking_history(
             "date": b.date,
             "price": b.price,
             "status": b.status,
-            "payment_url": b.payment_url,
+            "has_ticket": bool(b.ticket_pdf_path),
             "timestamp": b.timestamp
         }
         for b in bookings

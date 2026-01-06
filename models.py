@@ -33,7 +33,7 @@ class FlightBooking(Base):
 
     status = Column(String, default="pending")  # keep
     payment_url = Column(String)          # new
-
+    ticket_pdf_path = Column(Text, nullable=True)
     timestamp = Column(DateTime, default=datetime.utcnow)  # new
     stripe_session_id = Column(String, nullable=True)
     email_sent = Column(Boolean, default=False)

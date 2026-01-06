@@ -5,7 +5,6 @@ def post_payment_tasks(booking_id: int, email: str):
     from models import FlightBooking
     import traceback
 
-    
     db = SessionLocal()
     booking = None
 
@@ -22,11 +21,17 @@ def post_payment_tasks(booking_id: int, email: str):
             print(f"Email already sent for booking {booking_id}")
             return
 
+        # 1️⃣ Generate ticket
         pdf_path = create_ticket_pdf(booking)
+
+        # 2️⃣ Send email
         send_ticket_email(email, pdf_path)
 
+        # 3️⃣ Persist results
+        booking.ticket_pdf_path = pdf_path
         booking.email_sent = True
         booking.email_attempts = (booking.email_attempts or 0) + 1
+
         db.commit()
 
         print(f"Email sent successfully for booking {booking_id}")
@@ -36,9 +41,7 @@ def post_payment_tasks(booking_id: int, email: str):
             booking.email_attempts = (booking.email_attempts or 0) + 1
             db.commit()
 
-        print(
-            f"Post-payment task failed for booking {booking_id}: {e}"
-        )
+        print(f"Post-payment task failed for booking {booking_id}: {e}")
         traceback.print_exc()
 
     finally:
