@@ -21,7 +21,10 @@ if not STRIPE_SECRET_KEY:
     print("⚠️ WARNING: STRIPE_SECRET_KEY not found in .env")
 
 stripe.api_key = STRIPE_SECRET_KEY
-
+SUCCESS_LOCAL_URL=os.getenv("SUCCESS_LOCAL_URL")
+CANCEL_LOCAL_URL=os.getenv("CANCEL_LOCAL_URL")
+SUCCESS_DEP_URL=os.getenv("SUCCESS_DEP_URL")
+CANCEL_DEP_URL=os.getenv("CANCEL_DEP_URL")
 from pydantic import BaseModel
 
 class ConfirmRequest(BaseModel):
@@ -63,8 +66,8 @@ def select_flight(
                 'quantity': 1,
             }],
             mode='payment',
-            success_url="https://flighter-io-frontend.vercel.app/success?session_id={CHECKOUT_SESSION_ID}",
-            cancel_url="https://flighter-io-frontend.vercel.app/cancel",
+            success_url=f"{SUCCESS_DEP_URL}?session_id={{CHECKOUT_SESSION_ID}}",
+            cancel_url=CANCEL_DEP_URL,
         )
 
     except Exception as e:
@@ -119,7 +122,7 @@ async def stripe_webhook(
         event = stripe.Webhook.construct_event(
             payload,
             sig_header,
-            WEBHOOK_SECRET,
+            WEBHOOK_LOCAL,
         )
     except Exception as e:
         print("❌ Webhook signature verification failed:", e)
