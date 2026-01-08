@@ -52,9 +52,12 @@ def login(request: UserLogin, db: Session = Depends(get_db)):
             "email": user.email
         }
     )
-
     return {
         "access_token": token,
-        "token_type": "bearer"
+        "token_type": "bearer",
+        "user": {
+            "id": user.id,
+            "name": user.username,
+            "email": user.email
+        }
     }
-
