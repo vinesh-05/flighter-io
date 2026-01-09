@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from database import engine, Base
+from services.redis_client import close_redis
 from routers import users
 from routers import chat
 from routers import flights
@@ -14,6 +15,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.on_event("shutdown")
+async def shutdown():
+    await close_redis()
+
+
 # Include routers
 app.include_router(users.router)
 app.include_router(chat.router)

@@ -66,8 +66,8 @@ def select_flight(
                 'quantity': 1,
             }],
             mode='payment',
-            success_url=f"{SUCCESS_DEP_URL}?session_id={{CHECKOUT_SESSION_ID}}",
-            cancel_url=CANCEL_DEP_URL,
+            success_url=f"{SUCCESS_LOCAL_URL}?session_id={{CHECKOUT_SESSION_ID}}",
+            cancel_url=CANCEL_LOCAL_URL,
         )
 
     except Exception as e:
@@ -122,7 +122,7 @@ async def stripe_webhook(
         event = stripe.Webhook.construct_event(
             payload,
             sig_header,
-            WEBHOOK_SECRET,
+            WEBHOOK_LOCAL,
         )
     except Exception as e:
         print("❌ Webhook signature verification failed:", e)
@@ -131,8 +131,6 @@ async def stripe_webhook(
     if event["type"] == "checkout.session.completed":
         session = event["data"]["object"]
         session_id = session["id"]
-        email = session["customer_details"]["email"]
-
         booking = (
             db.query(FlightBooking)
             .filter(FlightBooking.stripe_session_id == session_id)
@@ -153,7 +151,7 @@ async def stripe_webhook(
             background_tasks.add_task(
                 post_payment_tasks,
                 booking.id,
-                email,
+                booking.user.email
             )
 
     return {"status": "ok"}

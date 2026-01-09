@@ -3,12 +3,13 @@ from sqlalchemy.orm import Session
 from datetime import datetime
 from database import get_db
 from models import Conversation
+from models import FlightBooking
 from auth import get_current_user
 from services.main_agent import unified_agent
 from services.amadeus_service import search_flights
 from services.sorter_agent import sort_flights
 from routers.flights import select_flight
-from services.redis_client import redis_client
+from services.redis_client import get_redis
 from pydantic import BaseModel
 import json
 from datetime import date as dt_date
@@ -27,6 +28,8 @@ router = APIRouter(prefix="/chat", tags=["Chat"])
 
 class ChatRequest(BaseModel):
     message: str
+def normalize_response(reply):
+    return reply if isinstance(reply, str) else json.dumps(reply)
 
 
 def get_last_three_messages(db: Session, user_id: int):
@@ -54,14 +57,16 @@ async def chat_with_bot(
     # -----------------------------  
     # Load short-term message memory  
     # -----------------------------
-    redis_history = await redis_client.get(f"user:{current_user.id}:last_messages")
+    redis = await get_redis()
+    redis_history = await redis.get(f"user:{current_user.id}:last_messages")
+
     previous_messages = json.loads(redis_history) if redis_history else \
         get_last_three_messages(db, current_user.id)
 
     # -----------------------------  
     # Load last route  
     # -----------------------------
-    redis_route = await redis_client.get(f"user:{current_user.id}:last_route")
+    redis_route = await redis.get(f"user:{current_user.id}:last_route")
     if redis_route:
         route = json.loads(redis_route)
         last_route_origin = route.get("origin")
@@ -133,7 +138,7 @@ async def chat_with_bot(
         db.add(new_chat)
         db.commit()
 
-        await redis_client.set(
+        await redis.set(
             f"user:{current_user.id}:last_messages",
             json.dumps(previous_messages + [{"user": message, "bot": ai_reply}]),
             ex=3600
@@ -147,7 +152,7 @@ async def chat_with_bot(
     if intent == "flight_search" and needs_backend:
 
         # RESET: old routes, flights, booking state
-        await redis_client.delete(f"user:{current_user.id}:last_route")
+        await redis.delete(f"user:{current_user.id}:last_route")
 
         # If missing fields → return AI reply only
         if not origin or not destination:
@@ -161,7 +166,7 @@ async def chat_with_bot(
         new_chat = Conversation(
             user_id=current_user.id,
             message=message,
-            response=json.dumps(reply),
+            response=normalize_response(reply),
             intent="flight_search",
             timestamp=datetime.utcnow(),
             flight_context=json.dumps(flights)
@@ -170,7 +175,7 @@ async def chat_with_bot(
         db.commit()
 
         # Set new route
-        await redis_client.set(
+        await redis.set(
             f"user:{current_user.id}:last_route",
             json.dumps({
                 "origin": origin,
@@ -182,7 +187,7 @@ async def chat_with_bot(
 
 
         # Save messages
-        await redis_client.set(
+        await redis.set(
             f"user:{current_user.id}:last_messages",
             json.dumps(previous_messages + [{"user": message, "bot": reply}]),
             ex=3600
@@ -208,7 +213,7 @@ async def chat_with_bot(
         new_chat = Conversation(
             user_id=current_user.id,
             message=message,
-            response=json.dumps(reply),
+            response=normalize_response(reply),
             intent=intent,
             timestamp=datetime.utcnow(),
             flight_context=json.dumps(sorted_flights)
@@ -217,7 +222,7 @@ async def chat_with_bot(
         db.commit()
 
         # Save messages
-        await redis_client.set(
+        await redis.set(
             f"user:{current_user.id}:last_messages",
             json.dumps(previous_messages + [{"user": message, "bot": reply}]),
             ex=3600
@@ -258,7 +263,7 @@ async def chat_with_bot(
         new_chat = Conversation(
             user_id=current_user.id,
             message=message,
-            response=json.dumps(reply),
+            response=normalize_response(reply),
             intent="flight_booking",
             timestamp=datetime.utcnow(),
             flight_context=json.dumps(flights)  # keep full list
@@ -266,9 +271,9 @@ async def chat_with_bot(
         db.add(new_chat)
         db.commit()
 
-        await redis_client.delete(f"user:{current_user.id}:last_messages")
+        await redis.delete(f"user:{current_user.id}:last_messages")
 
-        await redis_client.set(
+        await redis.set(
             f"user:{current_user.id}:last_messages",
             json.dumps(previous_messages + [{"user": message, "bot": reply}]),
             ex=3600
@@ -282,7 +287,7 @@ async def chat_with_bot(
     new_chat = Conversation(
         user_id=current_user.id,
         message=message,
-        response=ai_reply,
+        response=normalize_response(ai_reply),
         intent=intent,
         timestamp=datetime.utcnow(),
         flight_context=None
@@ -290,10 +295,73 @@ async def chat_with_bot(
     db.add(new_chat)
     db.commit()
 
-    await redis_client.set(
+    await redis.set(
         f"user:{current_user.id}:last_messages",
         json.dumps(previous_messages + [{"user": message, "bot": ai_reply}]),
         ex=3600
     )
     
     return {"bot_response": ai_reply, "intent": intent}
+
+@router.get("/history")
+def get_chat_history(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
+):
+    conversations = (
+        db.query(Conversation)
+        .filter(Conversation.user_id == current_user.id)
+        .order_by(Conversation.timestamp.asc())
+        .all()
+    )
+    routes=(
+        db.query(FlightBooking)
+        .filter(FlightBooking.user_id == current_user.id)
+        .order_by(FlightBooking.timestamp.asc())
+        .all()
+    )
+
+    messages = []
+
+    for c in conversations:
+        # User message
+        if c.message:
+            messages.append({
+                "sender": "user",
+                "text": c.message
+            })
+
+        # Bot reply
+        if c.response:
+            messages.append({
+                "sender": "bot",
+                "text": c.response if isinstance(c.response, str) else json.dumps(c.response)
+            })
+
+        # ✅ FIXED flight replay
+        if c.intent == "flight_search" and c.flight_context:
+            try:
+                flights = json.loads(c.flight_context)
+                if not isinstance(flights, list) or len(flights) == 0:
+                    flights = []
+            except Exception:
+                flights = []
+
+            if flights:
+                origin = flights[0].get("from")
+                destination = flights[0].get("to")
+            else:
+                origin = None
+                destination = None
+
+            messages.append({
+                "sender": "bot",
+                "text": "FLIGHT_DATA_JSON::" + json.dumps({
+                    "origin": origin,
+                    "destination": destination,
+                    "date": None,   # date not stored, fine
+                    "flights": flights
+                })
+            })
+
+    return messages

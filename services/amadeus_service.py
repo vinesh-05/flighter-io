@@ -2,7 +2,7 @@ import os
 import httpx
 from dotenv import load_dotenv
 from datetime import datetime
-from services.redis_client import redis_client
+from services.redis_client import get_redis
 import json
 import re
 
@@ -63,8 +63,8 @@ async def search_flights(origin: str, destination: str, departure_date: str):
     # 🔥 Redis Cache (2 minutes)
     # --------------------------
     cache_key = f"flights:{origin}:{destination}:{departure_date}"
-
-    cached = await redis_client.get(cache_key)
+    redis = await get_redis()
+    cached = await redis.get(cache_key)
     if cached:
         print("⚡ Redis Cache Hit → Returning cached flights")
         return json.loads(cached)
@@ -139,6 +139,6 @@ async def search_flights(origin: str, destination: str, departure_date: str):
     # --------------------------
     # 🧠 Save to Redis Cache
     # --------------------------
-    await redis_client.set(cache_key, json.dumps(flights), ex=600)
+    await redis.set(cache_key, json.dumps(flights), ex=600)
 
     return flights
