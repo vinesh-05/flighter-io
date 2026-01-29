@@ -124,9 +124,9 @@ async def stripe_webhook(
             sig_header,
             WEBHOOK_LOCAL,
         )
-    except Exception as e:
-        print("❌ Webhook signature verification failed:", e)
-        return {"status": "ignored"}
+    except stripe.error.SignatureVerificationError:
+        print("❌ Webhook signature verification failed:")
+        return {"error": "Invalid Signature"}
 
     if event["type"] == "checkout.session.completed":
         session = event["data"]["object"]
@@ -150,8 +150,7 @@ async def stripe_webhook(
         if not booking.email_sent:
             background_tasks.add_task(
                 post_payment_tasks,
-                booking.id,
-                booking.user.email
+                booking.id
             )
 
     return {"status": "ok"}

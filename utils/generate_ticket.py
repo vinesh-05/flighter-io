@@ -1,82 +1,86 @@
-import os
-import tempfile
+from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import letter
-from reportlab.lib.colors import HexColor, black, white
+from reportlab.lib.units import cm
+import os
+from datetime import datetime
 
+def generate_ticket_pdf(booking, passenger):
+    file_name = f"ticket_booking_{booking.id}_passenger_{passenger.id}.pdf"
+    file_path = f"tickets/{file_name}"
 
-def create_ticket_pdf(booking):
-    temp_dir = tempfile.gettempdir()
-    file_path = os.path.join(temp_dir, f"ticket_{booking.id}.pdf")
+    os.makedirs("tickets", exist_ok=True)
 
-    c = canvas.Canvas(file_path, pagesize=letter)
-    width, height = letter
+    c = canvas.Canvas(file_path, pagesize=A4)
+    width, height = A4
+    y = height - 2 * cm
 
-    # Colors
-    PRIMARY = HexColor("#1e3a8a")   # blue
-    LIGHT_BG = HexColor("#f1f5f9")
+    # Header
+    c.setFont("Helvetica-Bold", 18)
+    c.drawString(2 * cm, y, "FLIGHT TICKET")
+    y -= 1.2 * cm
 
-    # ===== Header =====
-    c.setFillColor(PRIMARY)
-    c.rect(0, height - 90, width, 90, stroke=0, fill=1)
+    c.setFont("Helvetica", 10)
+    c.drawString(2 * cm, y, f"Booking ID: {booking.id}")
+    y -= 0.6 * cm
 
-    c.setFillColor(white)
-    c.setFont("Helvetica-Bold", 24)
-    c.drawString(40, height - 55, "FLIGHT TICKET")
+    # 🔹 Primary passenger (THIS ticket belongs to)
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(2 * cm, y, f"Passenger: {passenger.name}")
+    y -= 0.5 * cm
 
-    c.setFont("Helvetica", 12)
-    c.drawRightString(width - 40, height - 55, "Boarding Pass")
+    c.setFont("Helvetica", 10)
+    c.drawString(
+        2 * cm,
+        y,
+        f"Age: {passenger.age} | Type: {passenger.type.title()}"
+    )
+    y -= 0.8 * cm
 
-    # ===== Ticket Box =====
-    c.setFillColor(LIGHT_BG)
-    c.roundRect(40, 140, width - 80, height - 260, 12, stroke=0, fill=1)
+    # 🔹 All passengers (group context)
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(2 * cm, y, "Travelling With:")
+    y -= 0.5 * cm
 
-    c.setFillColor(black)
+    c.setFont("Helvetica", 10)
+    for p in booking.passengers:
+        label = f"{p.name} ({p.type.title()})"
+        if p.id == passenger.id:
+            label += "  ← This ticket"
 
-    # ===== Passenger Info =====
-    c.setFont("Helvetica-Bold", 14)
-    c.drawString(60, height - 130, "Passenger Details")
+        c.drawString(2.5 * cm, y, f"- {label}")
+        y -= 0.4 * cm
 
-    c.setFont("Helvetica", 12)
-    c.drawString(60, height - 160, f"User ID: {booking.user_id}")
+    y -= 0.6 * cm
 
-    # ===== Flight Info =====
-    c.setFont("Helvetica-Bold", 14)
-    c.drawString(60, height - 210, "Flight Information")
+    # Flight info
+    c.setFont("Helvetica", 10)
+    c.drawString(
+        2 * cm,
+        y,
+        f"Route: {booking.origin} → {booking.destination}"
+    )
+    y -= 0.4 * cm
 
-    c.setFont("Helvetica", 12)
-    c.drawString(60, height - 240, f"Flight Number : {booking.flight_id}")
-    c.drawString(60, height - 265, f"Airline       : {booking.airline}")
-    c.drawString(60, height - 290, f"Route         : {booking.origin} → {booking.destination}")
+    c.drawString(
+        2 * cm,
+        y,
+        f"Date: {booking.date} | Departure: {booking.departure_time} | Arrival: {booking.arrival_time}"
+    )
+    y -= 0.8 * cm
 
-    # ===== Timing Info =====
-    c.setFont("Helvetica-Bold", 14)
-    c.drawString(60, height - 340, "Schedule")
+    # Payment info
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(2 * cm, y, f"Total Booking Amount: ₹{booking.total_amount}")
+    y -= 0.6 * cm
 
-    c.setFont("Helvetica", 12)
-    c.drawString(60, height - 370, f"Departure : {booking.departure_time}")
-    c.drawString(60, height - 395, f"Arrival   : {booking.arrival_time}")
-    c.drawString(60, height - 420, f"Date      : {booking.date}")
-
-    # ===== Price Box =====
-    c.setFillColor(PRIMARY)
-    c.roundRect(width - 260, 200, 180, 70, 10, stroke=0, fill=1)
-
-    c.setFillColor(white)
-    c.setFont("Helvetica-Bold", 16)
-    c.drawCentredString(width - 170, 245, "Total Fare")
-
-    c.setFont("Helvetica-Bold", 20)
-    c.drawCentredString(width - 170, 220, f"₹ {booking.price}")
-
-    # ===== Footer =====
-    c.setFillColor(black)
-    c.setFont("Helvetica-Oblique", 10)
-    c.drawCentredString(
-        width / 2,
-        80,
-        "This is a system-generated ticket. Please carry a valid ID proof during travel."
+    c.setFont("Helvetica", 9)
+    c.drawString(
+        2 * cm,
+        y,
+        f"Issued on: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}"
     )
 
+    c.showPage()
     c.save()
+
     return file_path

@@ -1,12 +1,11 @@
-def post_payment_tasks(booking_id: int, email: str):
+def post_payment_tasks(booking_id: int):
     from database import SessionLocal
-    from utils.generate_ticket import create_ticket_pdf
+    from utils.generate_ticket import generate_ticket_pdf
     from utils.emailer import send_ticket_email
     from models import FlightBooking
     import traceback
 
     db = SessionLocal()
-    booking = None
 
     try:
         booking = db.query(FlightBooking).filter(
@@ -17,32 +16,43 @@ def post_payment_tasks(booking_id: int, email: str):
             print(f"Booking {booking_id} not found")
             return
 
-        if booking.email_sent:
-            print(f"Email already sent for booking {booking_id}")
-            return
+        # 🔁 Process each passenger individually
+        for passenger in booking.passengers:
 
-        # 1️⃣ Generate ticket
-        pdf_path = create_ticket_pdf(booking)
+            # Idempotency guard (per passenger)
+            if passenger.ticket_email_sent:
+                continue
 
-        # 2️⃣ Send email
-        send_ticket_email(email, pdf_path)
+            # 1️⃣ Generate passenger ticket
+            pdf_path = generate_ticket_pdf(booking, passenger)
+            passenger.ticket_pdf_path = pdf_path
 
-        # 3️⃣ Persist results
-        booking.ticket_pdf_path = pdf_path
+            # 2️⃣ Decide recipient email
+            if passenger.type == "adult":
+                recipient_email = passenger.email
+            else:
+                recipient_email = passenger.guardian.email
+
+            # 3️⃣ Send email
+            try:
+                send_ticket_email(recipient_email, pdf_path)
+                passenger.ticket_email_sent = True
+            except Exception:
+                booking.email_attempts = (booking.email_attempts or 0) + 1
+                print(
+                    f"Failed sending ticket for passenger {passenger.id}"
+                )
+
+        # ✅ Mark booking as fully processed
         booking.email_sent = True
-        booking.email_attempts = (booking.email_attempts or 0) + 1
-
         db.commit()
 
-        print(f"Email sent successfully for booking {booking_id}")
+        print(f"All tickets processed for booking {booking_id}")
 
     except Exception as e:
-        if booking:
-            booking.email_attempts = (booking.email_attempts or 0) + 1
-            db.commit()
-
         print(f"Post-payment task failed for booking {booking_id}: {e}")
         traceback.print_exc()
+        db.rollback()
 
     finally:
         db.close()

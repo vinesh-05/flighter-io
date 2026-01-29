@@ -5,31 +5,36 @@ from auth import get_current_user
 from database import get_db
 from models import FlightBooking
 import os
+from models import Passenger
 
 router = APIRouter(prefix="/bookings", tags=["Bookings"])
 
-@router.get("/{booking_id}/ticket")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(BASE_DIR)  # adjust if needed
+
+
+@router.get("/{passenger_id}/ticket")
 def download_ticket(
-    booking_id: int,
+    passenger_id: int,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(get_current_user)
 ):
-    booking = db.query(FlightBooking).filter(
-        FlightBooking.id == booking_id,
-        FlightBooking.user_id == current_user.id,
+    passenger = db.query(Passenger).join(FlightBooking).filter(
+        Passenger.id == passenger_id,
+        FlightBooking.user_id == current_user.id
     ).first()
 
-    if not booking:
-        raise HTTPException(status_code=404, detail="Booking not found")
+    if not passenger or not passenger.ticket_pdf_path:
+        raise HTTPException(status_code=404, detail="Ticket not found")
 
-    if booking.status != "paid":
-        raise HTTPException(status_code=403, detail="Ticket not available")
+    # 🔥 RESOLVE ABSOLUTE PATH
+    absolute_path = os.path.join(PROJECT_ROOT, passenger.ticket_pdf_path)
 
-    if not booking.ticket_pdf_path or not os.path.exists(booking.ticket_pdf_path):
+    if not os.path.exists(absolute_path):
         raise HTTPException(status_code=404, detail="Ticket file missing")
 
     return FileResponse(
-        booking.ticket_pdf_path,
+        absolute_path,
         media_type="application/pdf",
-        filename=f"ticket_{booking.id}.pdf"
+        filename=os.path.basename(absolute_path)
     )
