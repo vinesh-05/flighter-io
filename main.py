@@ -4,6 +4,7 @@ from services.redis_client import close_redis
 from routers import users
 from routers import chat
 from routers import flights
+from routers import details_upload
 from fastapi.openapi.utils import get_openapi
 from routers import ticket_listing
 from routers import bookings
@@ -27,6 +28,7 @@ async def shutdown():
 app.include_router(users.router)
 app.include_router(bookings.router)
 app.include_router(chat.router)
+app.include_router(details_upload.router)
 app.include_router(flights.router)
 app.include_router(ticket_listing.router)
 app.include_router(payments.router)

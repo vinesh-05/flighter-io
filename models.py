@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime, Float, Boolean
+from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime, Float, Boolean, Date
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from database import Base
@@ -18,24 +18,36 @@ class User(Base):
 class Passenger(Base):
     __tablename__ = "passengers"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
+    details_id = Column(Integer, ForeignKey("passenger_identities.id"))
+    booking_id = Column(
+        Integer,
+        ForeignKey("flight_bookings.id", ondelete="CASCADE"),
+        nullable=False
+    )
 
-    booking_id = Column(Integer, ForeignKey("flight_bookings.id", ondelete="CASCADE"))
-
-    type = Column(String)  # adult | child | infant
-    name = Column(String, nullable=False)
-    age = Column(Integer, nullable=False)
-
-    email = Column(String, nullable=True)
-    phone = Column(String, nullable=True)
-    address = Column(String, nullable=True)
-
-    guardian_id = Column(Integer, ForeignKey("passengers.id"), nullable=True)
-
+    # Snapshot data (FINAL)
+    full_name = Column(String, nullable=False)
+    dob = Column(Date, nullable=False)
+    gender = Column(String, nullable=False)
+    email=Column(String, nullable=True)
+    phone=Column(String, nullable=True)
+    address=Column(String, nullable=True)
     booking = relationship("FlightBooking", back_populates="passengers")
-    guardian = relationship("Passenger", remote_side=[id])
+
+
+    # Derived at booking time
+    type = Column(String, nullable=False)  # ADULT | CHILD | INFANT
+
+    # Guardian (optional)
+    guardian_passenger_id = Column(
+        Integer,
+        ForeignKey("passengers.id"),
+        nullable=True
+    )
     ticket_pdf_path = Column(Text, nullable=True)
     ticket_email_sent = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 class FlightBooking(Base):
     __tablename__ = "flight_bookings"
@@ -109,20 +121,11 @@ class PassengerIdentity(Base):
     )
 
     full_name = Column(String(100), nullable=False)
-    dob = Column(Date, nullable=True)
-    gender = Column(String(10), nullable=True)
-
+    dob = Column(Date, nullable=False)
+    gender = Column(String(10), nullable=False)
     email = Column(String(100), nullable=True)
     phone = Column(String(20), nullable=True)
-
-    # Aadhaar / Passport / Other
-    document_type = Column(String(20), nullable=True)
-
-    # last 4 digits only (masked storage)
-    document_last4 = Column(String(4), nullable=True)
-
-    verified = Column(Boolean, default=False)
-
+    Address = Column(String, nullable=True)
     created_at = Column(
         DateTime(timezone=True),
         server_default=func.now()

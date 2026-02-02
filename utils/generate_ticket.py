@@ -25,15 +25,10 @@ def generate_ticket_pdf(booking, passenger):
 
     # 🔹 Primary passenger (THIS ticket belongs to)
     c.setFont("Helvetica-Bold", 12)
-    c.drawString(2 * cm, y, f"Passenger: {passenger.name}")
+    c.drawString(2 * cm, y, f"Passenger: {passenger.full_name}")
     y -= 0.5 * cm
 
     c.setFont("Helvetica", 10)
-    c.drawString(
-        2 * cm,
-        y,
-        f"Age: {passenger.age} | Type: {passenger.type.title()}"
-    )
     y -= 0.8 * cm
 
     # 🔹 All passengers (group context)
@@ -43,7 +38,7 @@ def generate_ticket_pdf(booking, passenger):
 
     c.setFont("Helvetica", 10)
     for p in booking.passengers:
-        label = f"{p.name} ({p.type.title()})"
+        label = f"{p.full_name} ({p.type.title()})"
         if p.id == passenger.id:
             label += "  ← This ticket"
 

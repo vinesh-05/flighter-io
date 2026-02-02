@@ -29,7 +29,7 @@ Your job:
      set "date": null.
    - NEVER guess or compute the year.
 
-3. Understand when user is referring to the latest search results.
+3. If user doesn't mention any date during flight search, then let default date be today
 4. If user gives a NEW ROUTE → mark needs_backend_call = true.
 5. If sorting → extract sort_intent.
 6. If booking → extract flight_sno.

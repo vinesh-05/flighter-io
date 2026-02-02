@@ -1,10 +1,8 @@
-def validate_passengers(passengers: list):
+def validate_passengers(passengers: list, age: int):
     adults = []
     children = []
     infants = []
-
     for idx, p in enumerate(passengers):
-        age = p.age
         p_type = p.type
 
         # 🔒 Enforce age ↔ type consistency

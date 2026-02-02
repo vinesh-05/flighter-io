@@ -33,9 +33,9 @@ def create_stripe_session(
         raise HTTPException(status_code=400, detail="Booking is not payable")
 
     # 🔐 Recalculate price (DO NOT TRUST DB blindly)
-    adults = sum(1 for p in booking.passengers if p.type == "adult")
-    children = sum(1 for p in booking.passengers if p.type == "child")
-    infants = sum(1 for p in booking.passengers if p.type == "infant")
+    adults = sum(1 for p in booking.passengers if p.type == "ADULT")
+    children = sum(1 for p in booking.passengers if p.type == "CHILD")
+    infants = sum(1 for p in booking.passengers if p.type == "INFANT")
 
     recalculated_total = PricingService.calculate_total(
         base_price=booking.price,
