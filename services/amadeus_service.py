@@ -2,7 +2,6 @@ import os
 import httpx
 from dotenv import load_dotenv
 from datetime import datetime
-from services.redis_client import get_redis
 import json
 import re
 
@@ -59,27 +58,16 @@ def format_duration(duration: str):
 
 
 async def search_flights(origin: str, destination: str, departure_date: str):
-    # --------------------------
-    # 🔥 Redis Cache (2 minutes)
-    # --------------------------
-    cache_key = f"flights:{origin}:{destination}:{departure_date}"
-    redis = await get_redis()
-    cached = await redis.get(cache_key)
-    if cached:
-        print("⚡ Redis Cache Hit → Returning cached flights")
-        return json.loads(cached)
 
-    print("🛫 Redis Cache MISS → Calling Amadeus API")
+    print("🛫 Calling Amadeus API")
 
     # --------------------------
     # 🔐 Get new access token
     # --------------------------
-    
     try:
         token = await get_access_token()
     except Exception as e:
         raise RuntimeError(f"Amadeus AUTH ERROR: {str(e)}")
-
 
     headers = {"Authorization": f"Bearer {token}"}
 
@@ -102,7 +90,7 @@ async def search_flights(origin: str, destination: str, departure_date: str):
         )
 
     data = response.json()
-    
+
     flights = []
     AIRLINE_NAMES = {
         "AI": "Air India", "6E": "IndiGo", "UK": "Vistara",
@@ -135,10 +123,5 @@ async def search_flights(origin: str, destination: str, departure_date: str):
             "departure_time": format_time(first_segment["departure"]["at"]),
             "arrival_time": format_time(last_segment["arrival"]["at"])
         })
-
-    # --------------------------
-    # 🧠 Save to Redis Cache
-    # --------------------------
-    await redis.set(cache_key, json.dumps(flights), ex=600)
 
     return flights
