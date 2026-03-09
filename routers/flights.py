@@ -180,8 +180,12 @@ def get_booking_history(
             "date": b.date,
             "price": b.price,
             "status": b.status,
-            "has_ticket": bool(b.ticket_pdf_path),
-            "timestamp": b.timestamp
+            "has_ticket": any(p.ticket_pdf_path for p in b.passengers),
+            "timestamp": b.timestamp,
+            "passenger_id": next(
+            (p.id for p in b.passengers if p.ticket_pdf_path),
+            None
+             ),
         }
         for b in bookings
     ]
