@@ -14,6 +14,8 @@ class User(Base):
     password_hash = Column(String, nullable=False)
     conversations = relationship("Conversation", back_populates="user")
     bookings = relationship("FlightBooking", back_populates="user")
+    reset_email_count = Column(Integer, default=0)
+    reset_email_last_sent = Column(DateTime, nullable=True)
 
 class Passenger(Base):
     __tablename__ = "passengers"

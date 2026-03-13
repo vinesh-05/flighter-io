@@ -8,6 +8,8 @@ from fastapi.openapi.utils import get_openapi
 from routers import ticket_listing
 from routers import bookings
 from routers import payments
+from routers import forgot_password
+from routers import reset_password
 from fastapi.middleware.cors import CORSMiddleware
 app = FastAPI()
 app.add_middleware(
@@ -28,6 +30,8 @@ app.include_router(details_upload.router)
 app.include_router(flights.router)
 app.include_router(ticket_listing.router)
 app.include_router(payments.router)
+app.include_router(forgot_password.router)
+app.include_router(reset_password.router)
 # Create tables
 Base.metadata.create_all(bind=engine)
 
