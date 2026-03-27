@@ -1,11 +1,9 @@
 import requests
+import json
 import re
 from dotenv import load_dotenv
 import os
 from groq import Groq
-import json
-
-
 load_dotenv()
 
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
@@ -13,7 +11,7 @@ client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 MODEL_NAME = "llama-3.1-8b-instant"
 # 🔍 Step 1: Tavily Search
 def tavily_search(city: str):
-    query = f"top hotels in {city} with name, price per night, rating, booking link site:booking.com OR site:agoda.com OR site:makemytrip.com"
+    query = f"top hotels in {city} with names, ratings, price per nightsite:booking.com OR site:agoda.com OR site:makemytrip.com{city} hotels list"
 
     response = requests.post(
         "https://api.tavily.com/search",
@@ -26,6 +24,7 @@ def tavily_search(city: str):
 
     data = response.json()
     results=data.get("results",[])
+    print("results",results)
     return results
 
 
@@ -106,6 +105,7 @@ def extract_hotels_with_llm(results, city: str):
     }}
 
     RULES:
+    - If the price is in any other currency(ex: dollar, yen, etc) convert and return the INR(Indian Rupee) value of it only.
     - ONLY return name, price_per_night, rating, booking_link
     - Extract hotel names from "content"
     - Extract prices (remove ₹ and commas, return only number)
@@ -118,7 +118,6 @@ def extract_hotels_with_llm(results, city: str):
     - ONLY include hotels located in {city}
     - If hotel is from a different city, IGNORE it
     - If DATA does not contain enough hotels for {city}, still generate realistic hotels for {city}
-
     --------------------------------
     DATA:
     {context}
@@ -149,7 +148,7 @@ def get_hotels(city: str):
     print(f"🔍 Searching hotels for: {city}")
 
     results = tavily_search(city)
-    print("🧾 Tavily sample:", results[:2])
+    print("🧾 Tavily sample:", results[:])
 
     output = extract_hotels_with_llm(results, city)
     print("🧠 LLM Output:", output)
