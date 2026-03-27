@@ -4,6 +4,7 @@ from routers import users
 from routers import chat
 from routers import flights
 from routers import details_upload
+# from routers import hotels
 from fastapi.openapi.utils import get_openapi
 from routers import ticket_listing
 from routers import bookings
@@ -32,6 +33,7 @@ app.include_router(ticket_listing.router)
 app.include_router(payments.router)
 app.include_router(forgot_password.router)
 app.include_router(reset_password.router)
+# app.include_router(hotels.router)
 # Create tables
 Base.metadata.create_all(bind=engine)
 

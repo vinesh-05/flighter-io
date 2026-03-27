@@ -46,10 +46,15 @@ def send_ticket_email(to_email: str, pdf_path: str):
         timeout=10,
     )
 
+    print("STATUS:", response.status_code)
+    print("RESPONSE:", response.text)
+
     if response.status_code >= 400:
         raise RuntimeError(
             f"Brevo email failed: {response.status_code} {response.text}"
         )
+
+
 
 def send_password_reset_email(to_email: str, reset_link: str):
 
@@ -97,8 +102,11 @@ def send_password_reset_email(to_email: str, reset_link: str):
         json=payload,
         timeout=10,
     )
-
+    print("EMAIL FUNCTION CALLED")
     if response.status_code >= 400:
         raise RuntimeError(
             f"Brevo email failed: {response.status_code} {response.text}"
         )
+    else:
+        print("STATUS:", response.status_code)
+        print("RESPONSE:", response.text)

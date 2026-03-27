@@ -7,8 +7,10 @@ from models import FlightBooking
 from auth import get_current_user
 from services.main_agent import unified_agent
 from services.amadeus_service import search_flights
+from services.hotel_service import get_hotels
 from services.sorter_agent import sort_flights
 from routers.flights import select_flight
+from utils.chat_helper import save_chat_message
 from pydantic import BaseModel
 import json
 from datetime import date as dt_date
@@ -52,7 +54,7 @@ async def chat_with_bot(
     current_user=Depends(get_current_user)
 ):
     message = request.message.strip()
-
+    save_chat_message(db, current_user.id, "user", message)
     # -----------------------------  
     # Load short-term message memory  
     # -----------------------------
@@ -114,6 +116,22 @@ async def chat_with_bot(
     # -----------------------------  
     # ⚠ CASE: Destination is country → ask clarification  
     # -----------------------------
+    # -----------------------------
+    # YES → HOTEL SEARCH (FINAL FIX)
+    # -----------------------------
+    if intent == "general" and message.lower().strip() in ["yes", "yeah", "ok", "sure"]:
+        last_bot_message = (
+            db.query(Conversation)
+            .filter(Conversation.user_id == current_user.id)
+            .order_by(Conversation.timestamp.desc())
+            .first()
+        )
+
+        if last_bot_message and last_bot_message.intent == "hotel_prompt":
+            intent = "hotel_search"
+            needs_backend = True   # 🔥 THIS IS THE KEY LINE
+
+
     if intent == "flight_search" and destination is None and "airport" in ai_reply.lower():
         new_chat = Conversation(
             user_id=current_user.id,
@@ -156,6 +174,17 @@ async def chat_with_bot(
         db.add(new_chat)
         db.commit()
 
+        if flights:
+            formatted = "FLIGHT_DATA_JSON::" + json.dumps({
+            "origin": origin,
+            "destination": destination,
+            "date": date,
+            "flights": flights
+            })
+
+            save_chat_message(db, current_user.id, "agent", formatted)
+        else:
+            save_chat_message(db, current_user.id, "agent", reply)
         return {
             "bot_response": reply,
             "intent": intent,
@@ -228,10 +257,73 @@ async def chat_with_bot(
         )
         db.add(new_chat)
         db.commit()
-
+        save_chat_message(db, current_user.id, "agent", reply)
         return {"bot_response": reply, "intent": intent}
-        
+
+
     # -----------------------------  
+    # 4️⃣ HOTEL SEARCH (FINAL FIXED)
+    # -----------------------------  
+    if intent == "hotel_search" and needs_backend:
+
+        city = None
+
+        # ✅ 1. Prefer current user query (LLM extracted)
+        if destination:
+            city = destination
+
+        # ✅ 2. Fallback to flights (previous search context)
+        elif flights:
+            city = flights[0].get("to")
+
+        # ✅ 3. Fallback to last booking
+        else:
+            last_booking = (
+                db.query(FlightBooking)
+                .filter(FlightBooking.user_id == current_user.id)
+                .order_by(FlightBooking.timestamp.desc())
+                .first()
+            )
+
+            if last_booking:
+                city = last_booking.destination
+
+        # ❌ Still no city
+        if not city:
+            reply = "Please tell me the city you want hotels in."
+            save_chat_message(db, current_user.id, "agent", reply)
+
+            return {"bot_response": reply, "intent": intent}
+
+        # ✅ Clean city (basic normalization)
+        city = city.replace("airport", "").strip()
+
+        print(f"🔍 Searching hotels for: {city}")
+
+        # 🔥 MAIN: Tavily + LLM
+        hotel_data = get_hotels(city)
+
+        print("🧠 Hotel Data:", hotel_data)
+        formatted = "HOTEL_DATA_JSON::" + json.dumps(hotel_data)
+        # Save conversation
+        new_chat = Conversation(
+            user_id=current_user.id,
+            message=message,
+            response=formatted,
+            intent="hotel_search",
+            timestamp=datetime.utcnow(),
+            flight_context=None
+        )
+        db.add(new_chat)
+        db.commit()
+
+        # 🔥 Save structured message for frontend
+        save_chat_message(db, current_user.id, "agent", normalize_response(formatted))
+
+        return {
+            "bot_response": formatted,
+            "intent": intent
+        }    # -----------------------------  
     # 4️⃣ GENERAL  
     # -----------------------------
     new_chat = Conversation(
@@ -244,7 +336,7 @@ async def chat_with_bot(
     )
     db.add(new_chat)
     db.commit()
-
+    save_chat_message(db, current_user.id, "agent", ai_reply)
     return {"bot_response": ai_reply, "intent": intent}
 
 @router.get("/history")
@@ -269,11 +361,19 @@ def get_chat_history(
 
     for c in conversations:
         # User message
-        if c.message:
+        if c.message and c.message != "SYSTEM":
             messages.append({
                 "sender": "user",
                 "text": c.message
             })
+
+        # Show system-triggered messages (like hotel prompt)
+        if c.intent == "hotel_prompt":
+            messages.append({
+                "sender": "bot",
+                "text": c.response
+            })
+            continue
 
         # Bot reply
         if c.response:
@@ -281,6 +381,7 @@ def get_chat_history(
                 "sender": "bot",
                 "text": c.response if isinstance(c.response, str) else json.dumps(c.response)
             })
+            
 
         # ✅ FIXED flight replay
         if c.intent == "flight_search" and c.flight_context:
@@ -309,3 +410,33 @@ def get_chat_history(
             })
 
     return messages
+
+from models import ChatMessage
+from fastapi import Query
+
+
+@router.get("/messages")
+def get_new_messages(
+    last_id: int = Query(0),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
+):
+    messages = (
+        db.query(ChatMessage)
+        .filter(
+            ChatMessage.user_id == current_user.id,
+            ChatMessage.id > last_id
+        )
+        .order_by(ChatMessage.id.asc())
+        .all()
+    )
+
+    return [
+        {
+            "id": m.id,
+            "role": m.role,
+            "content": m.content,
+            "created_at": m.created_at.isoformat()
+        }
+        for m in messages
+    ]

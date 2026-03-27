@@ -1,3 +1,7 @@
+from models import Conversation
+from datetime import datetime
+from utils.chat_helper import save_chat_message
+
 def post_payment_tasks(booking_id: int):
     from database import SessionLocal
     from utils.generate_ticket import generate_ticket_pdf
@@ -56,6 +60,8 @@ def post_payment_tasks(booking_id: int):
 
         # ✅ Mark booking as fully processed
         booking.email_sent = True
+        # 🏨 NEW: Trigger hotel recommendation prompt
+        trigger_hotel_prompt(db, booking)
         db.commit()
 
         print(f"All tickets processed for booking {booking_id}")
@@ -69,3 +75,33 @@ def post_payment_tasks(booking_id: int):
 
     finally:
         db.close()
+
+
+def trigger_hotel_prompt(db, booking):
+
+    message = f"""
+Your flight to {booking.destination} is confirmed ✈️
+
+Would you like hotel recommendations there?
+""".strip()
+
+    # ✅ OLD SYSTEM (for history compatibility)
+    new_chat = Conversation(
+        user_id=booking.user_id,
+        message="SYSTEM",
+        response=message,
+        intent="hotel_prompt",
+        timestamp=datetime.utcnow(),
+        flight_context=None
+    )
+    db.add(new_chat)
+
+    # ✅ NEW SYSTEM (for real-time polling)
+    save_chat_message(
+        db,
+        booking.user_id,
+        "agent",
+        message
+    )
+
+    print("🔥 HOTEL PROMPT SAVED TO BOTH TABLES")

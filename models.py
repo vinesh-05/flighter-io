@@ -111,6 +111,22 @@ class Conversation(Base):
     user = relationship("User", back_populates="conversations")
     flight_context = Column(JSON, nullable=True)
 
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False
+    )
+
+    role = Column(String, nullable=False)  # "user" or "agent"
+
+    content = Column(Text, nullable=False)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 class PassengerIdentity(Base):
     __tablename__= "passenger_identities"

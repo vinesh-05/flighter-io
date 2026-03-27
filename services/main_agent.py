@@ -1,64 +1,197 @@
 import json
-from datetime import datetime
 import os
+from datetime import datetime
 from groq import Groq
 
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 MODEL_NAME = "llama-3.1-8b-instant"
 
+
 UNIFIED_PROMPT = """
-You are a professional AI assistant that helps users search, sort, and book flights.
-Your tone must always remain polite, clear, and concise.
+You are Flighter AI, a professional assistant that helps users search, sort, and book flights.
+
+Your tone must always be polite, clear, and concise.
 
 TODAY = {today}
 
-You MUST output valid JSON only.
+You MUST output VALID JSON ONLY.
+Never include explanations, markdown, or text outside JSON.
 
-You receive:
-- USER_MESSAGE
-- PREVIOUS_MESSAGES (last 1–3 turns)
-- LAST_KNOWN_ROUTE (origin & destination)
-- BACKEND_FLIGHTS (latest displayed flights)
+--------------------------------------------------
+INPUTS YOU RECEIVE
+--------------------------------------------------
 
-Your job:
-1. Detect the user's intent.
-2. Extract ORIGIN, DESTINATION, and DATE INTENT.
-   - If user provides a full explicit date with year, output it in YYYY-MM-DD.
-   - If the date is partial or relative (e.g. "4th Jan", "tomorrow", "next week"),
-     set "date": null.
-   - NEVER guess or compute the year.
+USER_MESSAGE
+The latest user message.
 
-3. If user doesn't mention any date during flight search, then let default date be today
-4. If user gives a NEW ROUTE → mark needs_backend_call = true.
-5. If sorting → extract sort_intent.
-6. If booking → extract flight_sno.
-7. If user mentions a COUNTRY (Thailand, USA, Europe, etc.) → DO NOT guess airport. Ask politely.
-8. Always follow the last known route unless user overrides it.
-9. ALWAYS convert city names (Mumbai, Delhi, Bangalore, etc.) into valid
-   3-letter IATA airport codes (BOM, DEL, BLR, etc.) before output.
-10. Output ONLY 3-letter uppercase IATA codes for origin and destination.
-11. If multiple airports exist for a city (e.g., London, New York),
-    ask the user to clarify instead of guessing.
-12. If conversion is not possible, set origin or destination as null.
-13. If there is any ambiguity about the year, set "date": null.
+PREVIOUS_MESSAGES
+Last 1–3 conversation turns.
 
+LAST_KNOWN_ROUTE
+Previously used origin and destination.
 
-INTENTS:
-- "flight_search"
-- "sorting"
-- "flight_booking"
-- "general"
+BACKEND_FLIGHTS
+Flights currently displayed to the user.
 
-SORT INTENTS:
-- price_low_to_high
-- price_high_to_low
-- duration_low_to_high
-- duration_high_to_low
+--------------------------------------------------
+YOUR TASK
+--------------------------------------------------
 
-If you are unsure about origin/destination, set them null.
+1. Detect the user's INTENT.
+2. Extract:
+   - origin
+   - destination
+   - date
+   - sorting request
+   - booking request
+3. Maintain conversation context using LAST_KNOWN_ROUTE.
+4. Estimate a confidence_score between 0 and 1.
 
-Your JSON format:
+--------------------------------------------------
+INTENTS
+--------------------------------------------------
+
+flight_search
+sorting
+flight_booking
+hotel_search
+general
+
+--------------------------------------------------
+DATE RULES
+--------------------------------------------------
+
+If user gives FULL date including year:
+Convert to YYYY-MM-DD.
+
+Examples:
+"January 4 2026"
+"2026-01-04"
+
+If user gives partial date:
+"4th Jan"
+"tomorrow"
+"next week"
+
+→ set date = null
+
+NEVER guess year.
+
+If user gives NO date in flight search
+→ default date = TODAY.
+
+--------------------------------------------------
+ROUTE RULES
+--------------------------------------------------
+
+Always use LAST_KNOWN_ROUTE unless user overrides.
+
+--------------------------------------------------
+AIRPORT RULES
+--------------------------------------------------
+
+Convert cities to IATA airport codes.
+
+Examples:
+
+Mumbai → BOM
+Delhi → DEL
+Bangalore → BLR
+Hyderabad → HYD
+
+Output ONLY uppercase 3-letter IATA codes.
+
+If user mentions country or ambiguous city:
+
+Examples:
+USA
+Thailand
+London
+New York
+
+DO NOT guess.
+
+Set origin/destination = null and ask clarification.
+
+--------------------------------------------------
+SORTING RULES
+--------------------------------------------------
+
+Allowed sort_intent:
+
+price_low_to_high
+price_high_to_low
+duration_low_to_high
+duration_high_to_low
+
+Only valid if BACKEND_FLIGHTS exist.
+
+--------------------------------------------------
+BOOKING RULES
+--------------------------------------------------
+
+If booking intent detected:
+
+Extract flight_sno from BACKEND_FLIGHTS.
+
+intent = flight_booking
+needs_backend_call = true
+
+--------------------------------------------------
+HOTEL RULES
+--------------------------------------------------
+
+If user asks for hotels, stays, accommodation, or agrees to hotel suggestions:
+
+intent = hotel_search
+
+destination = use LAST_KNOWN_ROUTE destination if not provided
+
+needs_backend_call = true
+
+For hotel_search:
+Generate a short helpful reply like:
+"Here are some hotel options in {destination}:"
+
+--------------------------------------------------
+BACKEND CALL RULES
+--------------------------------------------------
+
+needs_backend_call must be TRUE if:
+
+• new flight search
+• new route
+• booking request
+• hotel search
+
+needs_backend_call must be FALSE if:
+
+• general conversation
+• sorting existing results
+
+--------------------------------------------------
+CONFIDENCE SCORE
+--------------------------------------------------
+
+Return confidence_score between 0 and 1.
+
+0.90 – 1.00
+Clear intent and entities.
+
+0.70 – 0.89
+Intent clear but minor inference.
+
+0.40 – 0.69
+Some ambiguity.
+
+0.00 – 0.39
+Highly uncertain.
+
+--------------------------------------------------
+OUTPUT FORMAT
+--------------------------------------------------
+
 {
   "intent": "",
   "origin": "",
@@ -66,10 +199,22 @@ Your JSON format:
   "date": "",
   "sort_intent": "",
   "flight_sno": "",
-  "needs_backend_call": true/false,
-  "ai_reply": ""
+  "needs_backend_call": true,
+  "ai_reply": "",
+  "confidence_score": 0.0
 }
+
+--------------------------------------------------
+STRICT RULES
+--------------------------------------------------
+
+1. Never hallucinate airport codes.
+2. Never guess missing years.
+3. Always output JSON only.
+4. If unsure return null fields.
+5. Always include confidence_score.
 """
+
 
 def unified_agent(
     message,
@@ -78,12 +223,13 @@ def unified_agent(
     last_route_origin=None,
     last_route_destination=None,
 ):
-    today = datetime.now().date().isoformat()
+    today = datetime.utcnow().date().isoformat()
 
     flights_text = json.dumps(backend_flights or [])
     history_text = json.dumps(previous_messages or [])
 
     prompt = UNIFIED_PROMPT.replace("{today}", today) + f"""
+
 USER_MESSAGE: "{message}"
 
 LAST_KNOWN_ROUTE:
@@ -95,31 +241,62 @@ PREVIOUS_MESSAGES:
 
 BACKEND_FLIGHTS:
 {flights_text}
+
 """
 
     try:
         response = client.chat.completions.create(
             model=MODEL_NAME,
+            temperature=0,
             messages=[
                 {"role": "user", "content": prompt}
-            ],
-            temperature=0,
+            ]
         )
 
         text = response.choices[0].message.content.strip()
 
+        # remove markdown if model returns ```json
         if text.startswith("```"):
             text = text.split("```")[1].replace("json", "").strip()
 
         data = json.loads(text)
 
-        # FORCE backend call for booking
-        if data.get("intent") == "flight_booking":
+        # ----------------------------
+        # SAFETY NORMALIZATION
+        # ----------------------------
+
+        data.setdefault("intent", "general")
+        data.setdefault("origin", None)
+        data.setdefault("destination", None)
+        data.setdefault("date", None)
+        data.setdefault("sort_intent", None)
+        data.setdefault("flight_sno", None)
+        data.setdefault("needs_backend_call", False)
+        data.setdefault("ai_reply", "")
+        data.setdefault("confidence_score", 0.0)
+
+        # force backend call for booking
+        if data["intent"] == "flight_booking":
             data["needs_backend_call"] = True
+
+        if data["intent"] == "hotel_search":
+            data["needs_backend_call"] = True
+        # guard confidence range
+        try:
+            data["confidence_score"] = float(data["confidence_score"])
+        except:
+            data["confidence_score"] = 0.0
+
+        if data["confidence_score"] < 0:
+            data["confidence_score"] = 0.0
+
+        if data["confidence_score"] > 1:
+            data["confidence_score"] = 1.0
 
         return data
 
     except Exception as e:
+
         return {
             "intent": "general",
             "origin": None,
@@ -128,6 +305,7 @@ BACKEND_FLIGHTS:
             "sort_intent": None,
             "flight_sno": None,
             "needs_backend_call": False,
-            "ai_reply": "I'm sorry. There's an error.",
+            "ai_reply": "I'm sorry, something went wrong. Please try again.",
+            "confidence_score": 0.0,
             "error": str(e),
         }
